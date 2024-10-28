@@ -3,6 +3,7 @@ Generic Feynman--Kac models.
 """
 import jax
 import jax.numpy as jnp
+from gfk.tools import nconcat
 from gfk.typings import JArray, JKey, PyTree
 from typing import Callable, Tuple
 
@@ -56,9 +57,9 @@ def smc_feynman_kac(key: JKey,
 
     Returns
     -------
-    JArrays [(N, s, ...), (N, s), (N, )] or [(s, ...), (s, ), (N, )]
-    A tuple of three arrays. If `return_path` then the return sizes of the arrays are `(N, s, ...), (N, s), (N, )`. Else
-    are (s, ...), (s, ), (N, ).
+    JArrays [(N + 1, s, ...), (N + 1, s), (N + 1, )] or [(s, ...), (s, ), (N + 1, )]
+    A tuple of three arrays. If `return_path` then the return sizes of the arrays are
+    `(N + 1, s, ...), (N + 1, s), (N + 1, )`. Else are (s, ...), (s, ), (N + 1, ).
     """
     key_init, key_body = jax.random.split(key)
 
@@ -70,7 +71,7 @@ def smc_feynman_kac(key: JKey,
     def scan_body(carry, elem):
         samples, log_ws, ess = carry
         pytree, key_k = elem
-        key_resample, key_markov = jax.random.split(key_k, num=3)
+        key_resample, key_markov = jax.random.split(key_k)
 
         samples = jax.lax.cond(ess < resampling_threshold * nparticles,
                                lambda _: samples[resampling(key_resample, jnp.exp(log_ws))],
@@ -78,7 +79,7 @@ def smc_feynman_kac(key: JKey,
                                None)
 
         prop_samples = m(key_markov, samples, pytree)
-        log_ws_ = log_g(prop_samples, samples, pytree)
+        log_ws_ = log_g(prop_samples, samples, pytree)  #TODO: did not take into account the resampling
         log_ws = log_ws_ - jax.scipy.special.logsumexp(log_ws_)
         ess = compute_ess(log_ws)
 
@@ -87,10 +88,10 @@ def smc_feynman_kac(key: JKey,
     keys = jax.random.split(key_body, num=nsteps)
     if return_path:
         _, (sampless, log_wss, esss) = jax.lax.scan(scan_body, (samples0, log_ws0, ess0), (scan_pytree, keys))
-        return sampless, log_wss, esss
+        return nconcat(samples0, sampless), nconcat(log_ws0, log_wss), nconcat(ess0, esss)
     else:
         (samplesN, log_wsN, _), esss = jax.lax.scan(scan_body, (samples0, log_ws0, ess0), (scan_pytree, keys))
-        return samplesN, log_wsN, esss
+        return samplesN, log_wsN, nconcat(ess0, esss)
 
 
 def compute_ess(log_ws: JArray) -> JArray:
