@@ -1,0 +1,37 @@
+[build-system]
+requires = ['setuptools >= 75.2.0']
+build-backend = 'setuptools.build_meta'
+
+[tool.setuptools]
+packages = ['the folder name']
+
+[project]
+name = 'the project name'
+version = '0.0.1'
+authors = [
+    { name='Zheng Zhao', email='zz@zabemon.com' },
+]
+description = 'Description'
+readme = 'README.md'
+license = {file = 'LICENSE'}
+requires-python = '>=3.10'
+classifiers = [
+    'Programming Language :: Python :: 3',
+    'License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)',
+    'Operating System :: OS Independent',
+    'Intended Audience :: Science/Research',
+    'Intended Audience :: Developers',
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    'Topic :: Scientific/Engineering :: Information Analysis',
+    'Topic :: Scientific/Engineering :: Mathematics'
+]
+keywords = ['Markov models']
+dependencies = [
+    'numpy==2.1.1'
+]
+
+[project.urls]
+homepage = 'https://github.com/spdes/gdcs'
+documentation = 'https://github.com/spdes/gdcs'
+repository = 'https://github.com/spdes/gdcs'
+
