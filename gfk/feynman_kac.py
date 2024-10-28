@@ -83,7 +83,7 @@ def smc_feynman_kac(key: JKey,
         log_ws = log_ws_ - jax.scipy.special.logsumexp(log_ws_)
         ess = compute_ess(log_ws)
 
-        return (prop_samples, log_ws, ess), (prop_samples, log_ws_, ess) if return_path else ess
+        return (prop_samples, log_ws, ess), (prop_samples, log_ws, ess) if return_path else ess
 
     keys = jax.random.split(key_body, num=nsteps)
     if return_path:

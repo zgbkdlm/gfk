@@ -34,7 +34,7 @@ def test_fk_gaussian():
     obs_cov = jnp.eye(2)
     mean0 = jnp.array([1., 2., -1.])
     cov0 = jnp.eye(3)
-    ys = jnp.zeros((nsteps + 1, 2))
+    ys = jnp.asarray(np.random.randn(nsteps + 1, 2))
 
     mfs, vfs = kf(state_trans, state_cov, obs_trans, obs_cov, mean0, cov0, ys)
 
@@ -58,6 +58,6 @@ def test_fk_gaussian():
     print(esss)
 
     import matplotlib.pyplot as plt
-    plt.plot(mfs[:, 1])
-    plt.plot(jnp.einsum('ns...,ns->n...', sampless[:, :, 1], jnp.exp(log_wss)))
+    plt.plot(mfs[:, 0])
+    plt.plot(jnp.einsum('ns...,ns->n...', sampless[:, :, 0], jnp.exp(log_wss)))
     plt.show()
