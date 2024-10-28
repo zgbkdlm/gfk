@@ -3,15 +3,15 @@ requires = ['setuptools >= 75.2.0']
 build-backend = 'setuptools.build_meta'
 
 [tool.setuptools]
-packages = ['the folder name']
+packages = ['gfk']
 
 [project]
-name = 'the project name'
+name = 'gfk'
 version = '0.0.1'
 authors = [
     { name='Zheng Zhao', email='zz@zabemon.com' },
 ]
-description = 'Description'
+description = 'Efficient proposals in '
 readme = 'README.md'
 license = {file = 'LICENSE'}
 requires-python = '>=3.10'
@@ -27,11 +27,15 @@ classifiers = [
 ]
 keywords = ['Markov models']
 dependencies = [
-    'numpy==2.1.1'
+    'numpy==2.1.2',
+    'jax==0.4.35',
+    'jaxlib==0.4.35',
+    'scipy==1.14.1',
+    'matplotlib==3.9.2'
 ]
 
 [project.urls]
-homepage = 'https://github.com/spdes/gdcs'
-documentation = 'https://github.com/spdes/gdcs'
-repository = 'https://github.com/spdes/gdcs'
+homepage = 'https://github.com/zgbkdlm/gfk'
+documentation = 'https://github.com/zgbkdlm/gfk'
+repository = 'https://github.com/zgbkdlm/gfk'
 
