@@ -1,6 +1,7 @@
 """
 Generic Feynman--Kac models.
 """
+import math
 import jax
 import jax.numpy as jnp
 from gfk.tools import nconcat
@@ -62,6 +63,7 @@ def smc_feynman_kac(key: JKey,
     `(N + 1, s, ...), (N + 1, s), (N + 1, )`. Else are (s, ...), (s, ), (N + 1, ).
     """
     key_init, key_body = jax.random.split(key)
+    flat_log_ws = -math.log(nparticles) * jnp.ones(nparticles)
 
     samples0 = m0(key_init)
     log_ws0_ = log_g0(samples0)
@@ -73,13 +75,13 @@ def smc_feynman_kac(key: JKey,
         pytree, key_k = elem
         key_resample, key_markov = jax.random.split(key_k)
 
-        samples = jax.lax.cond(ess < resampling_threshold * nparticles,
-                               lambda _: samples[resampling(key_resample, jnp.exp(log_ws))],
-                               lambda _: samples,
-                               None)
+        samples, log_ws = jax.lax.cond(ess < resampling_threshold * nparticles,
+                                       lambda _: (samples[resampling(key_resample, jnp.exp(log_ws))], flat_log_ws),
+                                       lambda _: (samples, log_ws),
+                                       None)
 
         prop_samples = m(key_markov, samples, pytree)
-        log_ws_ = log_g(prop_samples, samples, pytree)  #TODO: did not take into account the resampling
+        log_ws_ = log_ws + log_g(prop_samples, samples, pytree)
         log_ws = log_ws_ - jax.scipy.special.logsumexp(log_ws_)
         ess = compute_ess(log_ws)
 
