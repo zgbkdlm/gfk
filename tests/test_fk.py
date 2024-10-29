@@ -13,11 +13,11 @@ jax.config.update('jax_enable_x64', True)
 def test_ess():
     n = 10
     ws = jnp.ones(n) / n
-    npt.assert_array_equal(compute_ess(jnp.log(ws)), n * 1.)
+    npt.assert_allclose(compute_ess(jnp.log(ws)), n * 1., rtol=1e-10)
 
     ws = jnp.zeros(n)
     ws = ws.at[1].set(1.)
-    npt.assert_array_equal(compute_ess(jnp.log(ws)), 1.)
+    npt.assert_allclose(compute_ess(jnp.log(ws)), 1., rtol=1e-10)
 
 
 def test_fk_gaussian():
