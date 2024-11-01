@@ -17,14 +17,14 @@ def make_nn(key: JKey, neural_network: nn.Module, shape_x: Sequence[int], shape_
 
     Parameters
     ----------
+    key : JKey
+        A JAX random key.
     neural_network : linen.Module
         A neural network instance.
     shape_x : (int, ...)
         The spatial dimension, where the leading axis means the batch size.
     shape_t : (int, ...)
         The temporal dimension, where the leading axis means the batch size.
-    key : JKey
-        A JAX random key.
 
     Returns
     -------

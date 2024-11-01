@@ -32,7 +32,8 @@ dependencies = [
     'jaxlib==0.4.35',
     'scipy==1.14.1',
     'matplotlib==3.9.2',
-    'flax==0.10.0'
+    'flax==0.10.0',
+    'tme==0.2.0'
 ]
 
 [project.urls]
