@@ -105,3 +105,8 @@ def compute_ess(log_ws: JArray) -> JArray:
     """Effective sample size.
     """
     return jnp.exp(-jax.scipy.special.logsumexp(log_ws * 2))
+
+
+def bootstrap_tme():
+    # TODO
+    pass
