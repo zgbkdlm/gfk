@@ -5,13 +5,13 @@ import math
 import matplotlib.pyplot as plt
 import tme.base_jax as tme
 from gfk.synthetic_targets import make_gsb
-from gfk.tools import kl
+from gfk.tools import bures
 from gfk.feynman_kac import smc_feynman_kac
 from gfk.resampling import stratified
 from functools import partial
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(666)
+key = jax.random.PRNGKey(6)
 
 # Define the data
 dim = 10
@@ -25,7 +25,7 @@ nsteps = 128
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
-nblocks = 32
+nblocks = 1
 block_dt = dt * (nsteps / nblocks)
 block_ts = jnp.linspace(0, T, nblocks + 1)
 
@@ -68,7 +68,7 @@ def log_lk(us, t_k):
         return log_likelihood(y, x)
 
     block_t = step_fn(t_k)
-    return tme.expectation(phi, us, t_k, block_t - t_k, drift, dispersion_d, order=1)
+    return tme.expectation(phi, us, t_k, block_t - t_k, drift, dispersion_d, order=0)
 
 
 def m(key_, us, tree_param):
@@ -82,7 +82,7 @@ def log_g(us_k, us_km1, tree_param):
 
 
 # Do conditional sampling
-nparticles = 100000
+nparticles = 1000
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
@@ -96,10 +96,8 @@ key, subkey = jax.random.split(key)
 post_m, post_cov = posterior_m_cov(y)
 approx_m = jnp.einsum('si,s->i', usT, jnp.exp(log_wsT))
 approx_cov = jnp.einsum('si,sj,s->ij', usT - approx_m, usT - approx_m, jnp.exp(log_wsT))
-print(post_m, approx_m)
-print(post_cov, approx_cov)
 
-print(kl(post_m, post_cov, approx_m, approx_cov))
+print(bures(post_m, post_cov, approx_m, approx_cov))
 
 plt.plot(esss)
 plt.show()

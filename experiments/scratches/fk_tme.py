@@ -36,7 +36,7 @@ nsteps = 128
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
-nblocks = 32
+nblocks = 64
 block_dt = dt * (nsteps / nblocks)
 block_ts = jnp.linspace(0, T, nblocks + 1)
 

@@ -64,3 +64,8 @@ def test_fk_gaussian():
                          jnp.exp(log_wss))
     npt.assert_allclose(smc_m, mfs, atol=5e-2)
     npt.assert_allclose(smc_cov, vfs, atol=1e-1)
+
+
+def test_fk_validity(m0, g0, m, g, target_energy):
+    # TODO
+    pass

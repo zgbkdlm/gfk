@@ -132,7 +132,8 @@ def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, 
     cov_ref = jnp.outer(g0, g0) + jnp.eye(d)
     cov = jnp.outer(g1, g1) + jnp.eye(d)
 
-    h = jax.random.normal(key_h, shape=(d, d))
+    # h = jax.random.normal(key_h, shape=(d, d))
+    h = jnp.eye(d)
     z = h @ cov @ h.T + jnp.eye(d)
     chol_z = jax.scipy.linalg.cho_factor(z)
 
