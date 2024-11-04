@@ -96,6 +96,11 @@ def smc_feynman_kac(key: JKey,
         return samplesN, log_wsN, nconcat(ess0, esss)
 
 
+def csmc():
+    # TODO
+    pass
+
+
 def compute_ess(log_ws: JArray) -> JArray:
     """Effective sample size.
     """

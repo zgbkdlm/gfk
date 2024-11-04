@@ -3,10 +3,12 @@ import jax.numpy as jnp
 import numpy as np
 import math
 import matplotlib.pyplot as plt
+import tme.base_jax as tme
 from gfk.synthetic_targets import Crescent
 from gfk.nns import make_nn, CrescentMLP
 from gfk.feynman_kac import smc_feynman_kac
 from gfk.resampling import stratified
+from functools import partial
 
 jax.config.update("jax_enable_x64", False)
 key = jax.random.PRNGKey(666)
@@ -16,8 +18,8 @@ crescent = Crescent(c=1., xi=0.5)
 
 
 # The likelihood pi(y | x)
-def logpdf_likelihood(y_, x):
-    return crescent.logpdf_y_cond_x(y_, x)
+def logpdf_likelihood(x):
+    return crescent.logpdf_y_cond_x(y, x)
 
 
 # Load the DSB model for pi_X
@@ -34,6 +36,10 @@ nsteps = 128
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
+nblocks = 32
+block_dt = dt * (nsteps / nblocks)
+block_ts = jnp.linspace(0, T, nblocks + 1)
+
 
 def ref_sampler(key_, n: int = 1):
     """The reference distribution is a standard Normal.
@@ -47,14 +53,18 @@ def rev_drift(u, t):
     return nn_drift(u, T - t, param_bwd)
 
 
-def rev_dispersion(_):
+def rev_dispersion(u, t):
     return 1.
+
+
+def rev_dispersion_tme(u, t):
+    return jnp.eye(2)
 
 
 def rev_transition_sampler(key_, us, t_k):
     """The Euler--Maruyama transition of the reversal
     """
-    cond_m, cond_scale = us + rev_drift(us, t_k) * dt, math.sqrt(dt) * rev_dispersion(t_k)
+    cond_m, cond_scale = us + rev_drift(us, t_k) * dt, math.sqrt(dt) * rev_dispersion(us, t_k)
     return cond_m + cond_scale * jax.random.normal(key_, shape=us.shape)
 
 
@@ -64,11 +74,23 @@ def m0(key_):
 
 
 def log_g0(us):
-    return log_lk(us)
+    return log_lk(us, jnp.array(0.))
 
 
-def log_lk(us):
-    return jax.vmap(logpdf_likelihood, in_axes=[None, 0])(y, us)
+def step_fn(t):
+    cond_list = [t == 0.] + [(t > lb) & (t <= ub) for (lb, ub) in zip(block_ts[:-1], block_ts[1:])]
+    func_list = [lambda _: block_ts[1]] + [lambda _, parg=block_t: parg for block_t in block_ts[1:]]
+    return jnp.piecewise(t, cond_list, func_list)
+
+
+@partial(jax.vmap, in_axes=[0, None])
+def log_lk(us, t_k):
+    # return jax.vmap(logpdf_likelihood, in_axes=[None, 0])(y, us)
+    def phi(x, _):
+        return logpdf_likelihood(x)
+
+    block_t = step_fn(t_k)
+    return tme.expectation(phi, us, t_k, block_t - t_k, rev_drift, rev_dispersion_tme, order=1)
 
 
 def m(key_, us, tree_param):
@@ -77,16 +99,19 @@ def m(key_, us, tree_param):
 
 
 def log_g(us_k, us_km1, tree_param):
-    return log_lk(us_k) - log_lk(us_km1)
+    t_km1, t_k = tree_param
+    return log_lk(us_k, t_k) - log_lk(us_km1, t_km1)
 
 
 # Do conditional sampling
-y = 5
+y = 2
 nparticles = 10000
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-usT, log_wsT, esss = smc_feynman_kac(subkey, m0, log_g0, m, log_g, (ts[:-1], ), nparticles, nsteps, stratified, .7, False)
+usT, log_wsT, esss = smc_feynman_kac(subkey, m0, log_g0, m, log_g, (ts[:-1], ts[1:]), nparticles, nsteps, stratified,
+                                     1.,
+                                     False)
 
 key, subkey = jax.random.split(key)
 cond_samples = usT[stratified(subkey, jnp.exp(log_wsT))]

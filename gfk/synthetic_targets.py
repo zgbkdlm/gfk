@@ -1,8 +1,11 @@
 """
 The test problem in the pedagogical example.
 """
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
+from gfk.dsb import gaussian_bw_sb
 from gfk.typings import JArray, JKey, FloatScalar
 from typing import Tuple
 
@@ -95,6 +98,64 @@ class Crescent:
         cov = -jnp.linalg.inv(jax.hessian(unnormalised_joint)(x))
         return jnp.sqrt(jnp.diagonal(cov)) * 2
 
-    def laplace(self):
-        # TODO
+
+class GM:
+    """This will give an almost exact model, and the errors comes from asymptotic T and the discretisation.
+    """
+    pass
+
+
+def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, Callable, Callable, Callable]:
+    """This will give an exact model, and the only error comes from the discretisation.
+
+    Parameters
+    ----------
+    key : JKey
+        A JAX random key.
+    d : int
+        The dimension of the Gaussian distribution.
+    sig : float, default=1.
+        The Brownian motion's diffusion coefficient.
+
+    Returns
+    -------
+    JArray, JArray, JArray, JArray, Callable, Callable
+        The ref mean, ref covariance, target mean, target covariance, drift, and dispersion functions.
+    """
+    key, subkey = jax.random.split(key)
+    key_m_ref, key_m, key_cov_ref, key_cov, key_ll_c, key_h = jax.random.split(subkey, num=6)
+
+    m_ref = jax.random.normal(key_m_ref, shape=(d,))
+    m = jax.random.normal(key_m, shape=(d,))
+    g0 = jax.random.normal(key_cov_ref, shape=(d,))
+    g1 = jax.random.normal(key_cov, shape=(d,))
+    cov_ref = jnp.outer(g0, g0) + jnp.eye(d)
+    cov = jnp.outer(g1, g1) + jnp.eye(d)
+
+    h = jax.random.normal(key_h, shape=(d, d))
+    z = h @ cov @ h.T + jnp.eye(d)
+    chol_z = jax.scipy.linalg.cho_factor(z)
+
+    def dispersion(x, t):
+        return 1.
+
+    _, _, drift = gaussian_bw_sb(m_ref, cov_ref, m, cov, sig=sig)
+
+    ll_cs = jax.random.normal(key_ll_c, shape=(d,))
+
+    def log_likelihood(y, x):
+        s = d // 2
+        x1, x2 = x[:s], x[s:]
+        return jax.scipy.stats.norm.logpdf(y, jnp.dot(ll_cs, jnp.concatenate([x1, x2 ** 2])), 1.)
+
+    def log_linear_likelihood(y, x):
+        return jax.scipy.stats.multivariate_normal.logpdf(y, h @ x, jnp.eye(d))
+
+    def posterior_linear(y):
+        v = cov @ h.T
+        return m + v @ jax.scipy.linalg.cho_solve(chol_z, y - h @ m), cov - v @ jax.scipy.linalg.cho_solve(chol_z, v.T)
+
+    def posterior(x, y):
         pass
+
+    return m_ref, cov_ref, m, cov, drift, dispersion, log_linear_likelihood, posterior_linear
