@@ -25,7 +25,7 @@ nsteps = 128
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
-nblocks = 1
+nblocks = 16
 block_dt = dt * (nsteps / nblocks)
 block_ts = jnp.linspace(0, T, nblocks + 1)
 
@@ -34,6 +34,10 @@ def ref_sampler(key_, n: int = 1):
     """The reference distribution is a standard Normal.
     """
     return m_ref + jnp.einsum('ij,nj->ni', chol_ref, jax.random.normal(key_, shape=(n, dim)))
+
+
+def ref_log_likelihood(y, x):
+    pass # TODO
 
 
 def dispersion_d(u, t):
@@ -68,7 +72,7 @@ def log_lk(us, t_k):
         return log_likelihood(y, x)
 
     block_t = step_fn(t_k)
-    return tme.expectation(phi, us, t_k, block_t - t_k, drift, dispersion_d, order=0)
+    return tme.expectation(phi, us, t_k, block_t - t_k, drift, dispersion_d, order=1)
 
 
 def m(key_, us, tree_param):
@@ -82,7 +86,7 @@ def log_g(us_k, us_km1, tree_param):
 
 
 # Do conditional sampling
-nparticles = 1000
+nparticles = 10
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)

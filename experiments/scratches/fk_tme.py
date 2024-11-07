@@ -36,7 +36,7 @@ nsteps = 128
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
-nblocks = 64
+nblocks = 1
 block_dt = dt * (nsteps / nblocks)
 block_ts = jnp.linspace(0, T, nblocks + 1)
 
@@ -90,7 +90,7 @@ def log_lk(us, t_k):
         return logpdf_likelihood(x)
 
     block_t = step_fn(t_k)
-    return tme.expectation(phi, us, t_k, block_t - t_k, rev_drift, rev_dispersion_tme, order=1)
+    return tme.expectation(phi, us, t_k, block_t - t_k, rev_drift, rev_dispersion_tme, order=2)
 
 
 def m(key_, us, tree_param):

@@ -66,6 +66,9 @@ def test_fk_gaussian():
     npt.assert_allclose(smc_cov, vfs, atol=1e-1)
 
 
-def test_fk_validity(m0, g0, m, g, target_energy):
-    # TODO
-    pass
+def test_bootstrap_fk_validity(log_g0, log_g, log_likelihood):
+    # Partially test if the Feynman--Kac model is valid in the generative (twisted) context.
+    # If valid, the potentials should amount to the target likelihood.
+    key = jax.random.PRNGKey(666)
+    ts = jnp.linspace(0., 1., 100)
+    xss = jax.random.normal(key, (100, 1000, d))

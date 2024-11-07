@@ -37,6 +37,7 @@ class Crescent:
         self.ms = jnp.concatenate([self.m0[None, :], self.m1[None, ::]], axis=0)
         self.vs = jnp.concatenate([self.v0[None, ...], self.v1[None, ...]], axis=0)
         self.chols = jnp.concatenate([self.chol_v0[None, ...], self.chol_v1[None, ...]], axis=0)
+        self.mean = self.w0 * self.m0 + self.w1 * self.m1
 
     def sampler_x(self, key: JKey):
         key_cat, key_x = jax.random.split(key)
@@ -160,3 +161,7 @@ def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, 
         pass
 
     return m_ref, cov_ref, m, cov, drift, dispersion, log_linear_likelihood, posterior_linear
+
+
+class BiochemicalO2Demand:
+    pass

@@ -23,3 +23,4 @@ Array = JArray | np.ndarray
 FloatScalar = float | JFloat
 IntScalar = int | JFloat
 BoolScalar = bool | JBool
+NumericScalar = FloatScalar | IntScalar

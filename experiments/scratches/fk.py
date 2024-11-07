@@ -9,15 +9,26 @@ from gfk.feynman_kac import smc_feynman_kac
 from gfk.resampling import stratified
 
 jax.config.update("jax_enable_x64", False)
+# jax.config.update("jax_disable_jit", True)
 key = jax.random.PRNGKey(666)
 
 # Define the data
 crescent = Crescent(c=1., xi=0.5)
+y_ref = crescent.emission(crescent.mean)
 
 
 # The likelihood pi(y | x)
 def logpdf_likelihood(y_, x):
     return crescent.logpdf_y_cond_x(y_, x)
+
+
+def ref_log_likelihood(y_, x):
+    return jax.scipy.stats.norm.logpdf(y_, jnp.sum(x), 1.)
+
+
+def proxy_log_likelihood(x, t):
+    alpha = t / T
+    return crescent.logpdf_y_cond_x((1 - alpha) * y_ref + alpha * y, x)
 
 
 # Load the DSB model for pi_X
@@ -64,11 +75,15 @@ def m0(key_):
 
 
 def log_g0(us):
-    return log_lk(us)
+    return log_lk(us, ts[0])
 
 
-def log_lk(us):
-    return jax.vmap(logpdf_likelihood, in_axes=[None, 0])(y, us)
+# def log_lk(us, t_k):
+#     return jax.vmap(logpdf_likelihood, in_axes=[None, 0])(y, us)
+
+
+def log_lk(us, t_k):
+    return jax.vmap(proxy_log_likelihood, in_axes=[0, None])(us, t_k)
 
 
 def m(key_, us, tree_param):
@@ -77,16 +92,17 @@ def m(key_, us, tree_param):
 
 
 def log_g(us_k, us_km1, tree_param):
-    return log_lk(us_k) - log_lk(us_km1)
+    t_km1, t_k = tree_param
+    return log_lk(us_k, t_k) - log_lk(us_km1, t_km1)
 
 
 # Do conditional sampling
-y = 5
-nparticles = 10000
+y = 4
+nparticles = 100
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-usT, log_wsT, esss = smc_feynman_kac(subkey, m0, log_g0, m, log_g, (ts[:-1], ), nparticles, nsteps, stratified, .7, False)
+usT, log_wsT, esss = smc_feynman_kac(subkey, m0, log_g0, m, log_g, (ts[:-1], ts[1:]), nparticles, nsteps, stratified, .7, False)
 
 key, subkey = jax.random.split(key)
 cond_samples = usT[stratified(subkey, jnp.exp(log_wsT))]
