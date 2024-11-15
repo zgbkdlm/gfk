@@ -28,7 +28,10 @@ def ref_log_likelihood(y_, x):
 
 def proxy_log_likelihood(x, t):
     alpha = t / T
-    return crescent.logpdf_y_cond_x((1 - alpha) * y_ref + alpha * y, x)
+    y__ = (1 - alpha) * y_ref + alpha * y
+    a, b = ref_log_likelihood(y__, x), crescent.logpdf_y_cond_x(y__, x)
+    # return (1 - alpha) * a + alpha * b
+    return jax.scipy.special.logsumexp(a=jnp.array([a, b]), b=jnp.array([1 - alpha, alpha]))
 
 
 # Load the DSB model for pi_X
@@ -97,8 +100,8 @@ def log_g(us_k, us_km1, tree_param):
 
 
 # Do conditional sampling
-y = 4
-nparticles = 100
+y = 2
+nparticles = 10000
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
@@ -124,7 +127,8 @@ meshgrid = jnp.meshgrid(grid, grid)
 cartesian = jnp.dstack(meshgrid)
 
 posterior_pdfs = crescent.pdf_x_cond_y(cartesian, y)
-plt.contourf(*meshgrid, posterior_pdfs, cmap=plt.cm.binary)
+# plt.contourf(*meshgrid, posterior_pdfs, cmap=plt.cm.binary, levels=20)
+plt.pcolormesh(*meshgrid, posterior_pdfs, cmap=plt.cm.binary)
 plt.scatter(cond_samples[:, 0], cond_samples[:, 1], s=1, c='tab:blue', alpha=0.2)
 
 plt.text(1, 1, f'$y={y}$')

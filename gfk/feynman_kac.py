@@ -4,8 +4,9 @@ Generic Feynman--Kac models.
 import math
 import jax
 import jax.numpy as jnp
+from gfk.likelihoods import pushfwd_normal, pushfwd_normal_batch
 from gfk.tools import nconcat
-from gfk.typings import Array, JArray, JKey, PyTree, FloatScalar, NumericScalar
+from gfk.typings import JArray, JKey, PyTree
 from typing import Callable, Tuple
 
 
@@ -107,49 +108,33 @@ def compute_ess(log_ws: JArray) -> JArray:
     return jnp.exp(-jax.scipy.special.logsumexp(log_ws * 2))
 
 
-def make_bootstrap_tme(ts, log_likelihood, drift, dispersion, order, nparticles):
+def _make_bootstrap_tme(ts, log_likelihood, drift, dispersion, order, nparticles):
     """Make a bootstrap Feynman--Kac model.
     """
-    def step_fn(t):
-        cond_list = [t == 0.] + [(t > lb) & (t <= ub) for (lb, ub) in zip(block_ts[:-1], block_ts[1:])]
-        func_list = [lambda _: block_ts[1]] + [lambda _, parg=block_t: parg for block_t in block_ts[1:]]
-        return jnp.piecewise(t, cond_list, func_list)
+
+    # def step_fn(t):
+    #     cond_list = [t == 0.] + [(t > lb) & (t <= ub) for (lb, ub) in zip(block_ts[:-1], block_ts[1:])]
+    #     func_list = [lambda _: block_ts[1]] + [lambda _, parg=block_t: parg for block_t in block_ts[1:]]
+    #     return jnp.piecewise(t, cond_list, func_list)
+
     pass
 
 
-def make_proxy_log_likelihood(ref_ll: Callable[[Array, Array], FloatScalar],
-                              target_ll: Callable[[Array, Array], FloatScalar],
-                              T: NumericScalar,
-                              log: bool = True) -> Callable[[Array, Array, FloatScalar], FloatScalar]:
-    """Make an interpolating proxy log-likelihood between the reference and target log-likelihoods.
+def make_fk_normal_likelihood(obs_op, obs_cov, mode: str = 'guided'):
+    def r(us, t):
+        return us + rev_drift(us, t) * dt
 
-    Parameters
-    ----------
-    ref_ll : Callable (dy, dx) -> float
-        The reference log-likelihood function.
-    target_ll : Callable (dy, dx) -> float
-        The target log-likelihood function.
-    T : number
-        A number that normalises the interpolating factor.
-    log : bool, default=True
-        Interpolating the log pdf or the pdf.
+    def C(k):
+        return dispersion(t_k)
 
-    Returns
-    -------
-    Callable (dy, dx, float) -> float
-        The interpolating proxy log-likelihood function.
-    """
+    def m(key, us, tree_param):
+        pass
 
-    def proxy_ll(y, x, t):
-        alpha = t / T
-        log_ref = ref_ll(x)
-        log_tar = target_ll(x)
+    def log_g(us_k, us_km1, tree_param):
+        return (log_lk(v_k, us_k, k) + logpdf_transition(us_k, us_km1, k, k - 1)
+                - log_lk(v_km1, us_km1, k - 1) - logpdf_m(us_k, us_km1, k, k - 1))
 
-        if log:
-            return (1 - alpha) * log_ref + alpha * log_tar
-        else:
-            bs = jnp.array([1 - alpha, alpha])
-            vs = jnp.array([log_ref, log_tar])
-            return jax.scipy.special.logsumexp(a=vs, b=bs)
+    obs_ops, obs_covs = pushfwd_normal_batch(obs_op, obs_cov, aux_trans_op, aux_trans_var, rev_trans_var, nsteps)
 
-    return proxy_ll
+    def log_lk(v, u, k):
+        return jax.scipy.stats.multivariate_normal.logpdf(v, obs_ops[N - k], obs_covs[N - k])
