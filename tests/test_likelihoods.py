@@ -40,6 +40,8 @@ def test_gaussian():
         F, Omega = pfwd(i)
         npt.assert_allclose(F, Fs[i])
         npt.assert_allclose(Omega, Omegas[i])
-
-    # Test if they match the truth
-    # TODO
+        true_F = S(i, 0) * H
+        true_Omega = S(i, 0) ** 2 * (H @ H.T * sum([C(i) for i in range(1, i + 1)]) + R) + (
+                1. - jnp.exp(-(ts[i] - ts[0])))
+        npt.assert_allclose(F, true_F)
+        npt.assert_allclose(Omega, true_Omega)
