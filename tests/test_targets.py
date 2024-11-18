@@ -13,7 +13,7 @@ jax.config.update('jax_enable_x64', True)
 
 def test_gsb():
     key = jax.random.PRNGKey(666)
-    _, _, m, cov, _, _, log_likelihood, posterior = make_gsb(key, d=10)
+    _, _, m, cov, _, _, log_likelihood, _, _, posterior = make_gsb(key, d=10)
     y = jnp.ones(10)
     computed_posterior_m, computed_posterior_cov = posterior(y)
 

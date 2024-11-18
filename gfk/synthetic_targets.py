@@ -106,7 +106,9 @@ class GM:
     pass
 
 
-def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, Callable, Callable, Callable]:
+def make_gsb(key: JKey,
+             d: int,
+             sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, Callable, Callable, JArray, JArray, Callable]:
     """This will give an exact model, and the only error comes from the discretisation.
 
     Parameters
@@ -120,7 +122,7 @@ def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, 
 
     Returns
     -------
-    JArray, JArray, JArray, JArray, Callable, Callable
+    JArray, JArray, JArray, JArray, Callable, Callable, JArray, JArray, Callable, Callable
         The ref mean, ref covariance, target mean, target covariance, drift, and dispersion functions.
     """
     key, subkey = jax.random.split(key)
@@ -135,10 +137,11 @@ def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, 
 
     # h = jax.random.normal(key_h, shape=(d, d))
     h = jnp.eye(d)
-    z = h @ cov @ h.T + jnp.eye(d)
+    r = jnp.eye(d)
+    z = h @ cov @ h.T + r
     chol_z = jax.scipy.linalg.cho_factor(z)
 
-    def dispersion(x, t):
+    def dispersion(t):
         return 1.
 
     _, _, drift = gaussian_bw_sb(m_ref, cov_ref, m, cov, sig=sig)
@@ -151,7 +154,7 @@ def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, 
         return jax.scipy.stats.norm.logpdf(y, jnp.dot(ll_cs, jnp.concatenate([x1, x2 ** 2])), 1.)
 
     def log_linear_likelihood(y, x):
-        return jax.scipy.stats.multivariate_normal.logpdf(y, h @ x, jnp.eye(d))
+        return jax.scipy.stats.multivariate_normal.logpdf(y, h @ x, r)
 
     def posterior_linear(y):
         v = cov @ h.T
@@ -160,7 +163,7 @@ def make_gsb(key, d, sig=1.) -> Tuple[JArray, JArray, JArray, JArray, Callable, 
     def posterior(x, y):
         pass
 
-    return m_ref, cov_ref, m, cov, drift, dispersion, log_linear_likelihood, posterior_linear
+    return m_ref, cov_ref, m, cov, drift, dispersion, log_linear_likelihood, h, r, posterior_linear
 
 
 class BiochemicalO2Demand:

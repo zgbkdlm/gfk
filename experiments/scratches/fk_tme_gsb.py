@@ -15,7 +15,7 @@ key = jax.random.PRNGKey(6)
 
 # Define the data
 dim = 10
-m_ref, cov_ref, mT, covT, drift, dispersion, log_likelihood, posterior_m_cov = make_gsb(key, d=dim)
+m_ref, cov_ref, mT, covT, drift, dispersion, log_likelihood, _, _, posterior_m_cov = make_gsb(key, d=dim)
 chol_ref = jnp.linalg.cholesky(cov_ref)
 y = jnp.zeros(dim)
 
