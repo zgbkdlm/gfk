@@ -1,7 +1,7 @@
 import jax
 import math
 import jax.numpy as jnp
-from gfk.typings import JArray, JKey
+from gfk.typings import JArray, JKey, Array
 from typing import Callable
 
 
@@ -107,7 +107,27 @@ def euler_maruyama(key: JKey, x0: JArray, ts: JArray,
         return terminal_val
 
 
-def sampling_gm(key, ws, ms, eigvals, eigvecs):
+def sampling_gm(key: JKey, ws: Array, ms: Array, eigvals: Array, eigvecs: Array) -> JArray:
+    """Sampling a Gaussian mixture distribution.
+
+    Parameters
+    ----------
+    key : JKey
+        A JAX random key.
+    ws : Array (n, )
+        The weights.
+    ms : Array (n, d)
+        The means.
+    eigvals : Array (n, d)
+        The eigenvalues of the covariance matrices.
+    eigvecs : Array (n, d, d)
+        The eigenvectors of the covariance matrices.
+
+    Returns
+    -------
+    JAarray (d, )
+        A sample from the Gaussian mixture distribution.
+    """
     n, d = ws.shape[0], ms.shape[1]
     key_cat, key_nor = jax.random.split(key)
 
@@ -116,6 +136,8 @@ def sampling_gm(key, ws, ms, eigvals, eigvecs):
 
 
 def logpdf_mvn(x, m, eigvecs, eigvals):
+    """Log pdf of a multivariate Normal distribution (without known eigendecomposition).
+    """
     n = m.shape[0]
     res = x - m
     c_ = eigvecs.T @ res

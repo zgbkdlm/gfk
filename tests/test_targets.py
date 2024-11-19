@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
-from gfk.synthetic_targets import make_gsb, make_gaussian_mixture
+from gfk.synthetic_targets import make_gsb, make_gaussian_mixture, gm_lin_posterior
 from gfk.tools import sampling_gm, euler_maruyama
 from functools import partial
 
@@ -27,23 +27,23 @@ def test_gsb():
 
 
 def test_gm():
-    key = jax.random.PRNGKey(9)
+    key = jax.random.PRNGKey(666)
     ncs, d = 3, 2
 
     ws = jnp.arange(1, ncs + 1)
     ws = ws / ws.sum()
-    ms = jax.random.normal(key, (ncs, d))
+    ms = jax.random.normal(key, (ncs, d)) * 1.5
     key, subkey = jax.random.split(key)
-    rnds = jax.random.normal(subkey, (ncs, d, d))
-    covs = jnp.einsum('nik,njk->nij', rnds, rnds)
-    eigvals, eigvecs = jax.vmap(jnp.linalg.eigh)(covs)
+    rnds = jax.random.normal(subkey, (ncs, d))
+    covs = jnp.einsum('ni,nj->nij', rnds, rnds) + jnp.eye(d)[None, :, :]
+    eigvals, eigvecs = jnp.linalg.eigh(covs)
 
-    def logpdf(x, ms_, covs_, ws_):
+    def logpdf(x_, ms_, covs_, ws_):
         return jax.scipy.special.logsumexp(
-            jax.vmap(jax.scipy.stats.multivariate_normal.logpdf, in_axes=[None, 0, 0])(x, ms_, covs_), b=ws_)
+            jax.vmap(jax.scipy.stats.multivariate_normal.logpdf, in_axes=[None, 0, 0])(x_, ms_, covs_), b=ws_)
 
-    wTs, mTs, dTs, score, rev_drift, rev_dispersion = make_gaussian_mixture(ws, ms, eigvecs, eigvals,
-                                                                            a=-0.5, b=1., t0=0., T=1.)
+    wTs, mTs, dTs, score, rev_drift, rev_dispersion = make_gaussian_mixture(ws, ms, eigvals, eigvecs, a=-0.5, b=1.,
+                                                                            t0=0., T=1.)
 
     x = jnp.ones(d)
     npt.assert_allclose(score(x, 0.), jax.grad(logpdf)(x, ms, covs, ws))
@@ -67,16 +67,34 @@ def test_gm():
 
     npt.assert_allclose(jnp.mean(x0s, axis=0), jnp.sum(ws[:, None] * ms, axis=0), atol=5e-2)
 
-    # import matplotlib.pyplot as plt
-    #
-    # def pdf(x):
-    #     return jnp.exp(logpdf(x, ms, covs, ws))
-    #
-    # grid = jnp.linspace(-8, 8, 1000)
-    # meshgrid = jnp.meshgrid(grid, grid)
-    # cartesian = jnp.dstack(meshgrid)
-    # pdfs = jax.vmap(jax.vmap(pdf))(cartesian)
-    # plt.contourf(*meshgrid, pdfs / pdfs.sum())
-    # plt.scatter(x0s[:, 0], x0s[:, 1], s=1, alpha=0.5)
-    # plt.scatter(ms[:, 0], ms[:, 1], c='r', s=10)
-    # plt.show()
+    import matplotlib.pyplot as plt
+
+    def pdf(x):
+        return jnp.exp(logpdf(x, ms, covs, ws))
+
+    grid = jnp.linspace(-8, 8, 1000)
+    meshgrid = jnp.meshgrid(grid, grid)
+    cartesian = jnp.dstack(meshgrid)
+    pdfs = jax.vmap(jax.vmap(pdf))(cartesian)
+    plt.contourf(*meshgrid, pdfs / pdfs.sum())
+    plt.scatter(x0s[::10, 0], x0s[::10, 1], s=1, alpha=0.5)
+    plt.scatter(ms[:, 0], ms[:, 1], c='r', s=10)
+    plt.show()
+
+    # Test posterior
+    dy = 4
+    key, subkey = jax.random.split(key)
+    obs_op = jax.random.normal(subkey, (dy, d))
+    obs_cov = jnp.eye(dy)
+    y = jnp.zeros(dy)
+
+    def log_energy(x_):
+        return jax.scipy.stats.multivariate_normal.logpdf(y, obs_op @ x_, obs_cov) + logpdf(x_, ms, covs, ws)
+
+    posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
+
+    def computed_posterior_logpdf(x_):
+        return logpdf(x_, posterior_ms, posterior_covs, posterior_ws)
+
+    x = jnp.zeros(d)
+    npt.assert_allclose(jax.grad(computed_posterior_logpdf)(x), jax.grad(log_energy)(x))

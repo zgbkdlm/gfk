@@ -161,7 +161,7 @@ def make_gsb(key: JKey,
     return m_ref, cov_ref, m, cov, drift, dispersion, log_linear_likelihood, h, r, posterior_linear
 
 
-def make_gaussian_mixture(ws, ms, eigvecs, eigvals, a, b, t0, T):
+def make_gaussian_mixture(ws, ms, eigvals, eigvecs, a, b, t0, T):
     def drift(x, t):
         return a * x
 
@@ -192,6 +192,19 @@ def make_gaussian_mixture(ws, ms, eigvecs, eigvals, a, b, t0, T):
     eigvalTs = jnp.exp(2 * a * (T - t0)) * eigvals + (b ** 2 / (2 * a) * (jnp.exp(2 * a * (T - t0)) - 1))
 
     return wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion
+
+
+def gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs):
+    """Compute the posterior distribution of a Gaussian mixture with linear Gaussian likelihood.
+    """
+    def single_posterior(w, m, cov):
+        g = obs_op @ cov @ obs_op.T + obs_cov
+        chol = jax.scipy.linalg.cho_factor(g)
+        return (jnp.log(w) + jax.scipy.stats.multivariate_normal.logpdf(y, obs_op @ m, g),
+                m + cov @ obs_op.T @ jax.scipy.linalg.cho_solve(chol, y - obs_op @ m),
+                cov - cov @ obs_op.T @ jax.scipy.linalg.cho_solve(chol, obs_op @ cov))
+    log_ws_, posterior_ms, posterior_covs = jax.vmap(single_posterior, in_axes=[0, 0, 0])(ws, ms, covs)
+    return jnp.exp(log_ws_ - jax.scipy.special.logsumexp(log_ws_)), posterior_ms, posterior_covs
 
 
 class BiochemicalO2Demand:
