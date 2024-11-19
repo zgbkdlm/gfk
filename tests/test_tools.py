@@ -3,7 +3,7 @@ import jax.random
 import numpy as np
 import jax.numpy as jnp
 import numpy.testing as npt
-from gfk.tools import nconcat, sqrtm, kl, bures
+from gfk.tools import nconcat, sqrtm, kl, bures, logpdf_mvn
 
 jax.config.update("jax_enable_x64", True)
 
@@ -33,3 +33,14 @@ def test_kl_bures():
     cov0, cov1 = jnp.eye(10), jnp.eye(10)
     npt.assert_allclose(0., kl(m0, cov0, m1, cov1))
     npt.assert_allclose(0., bures(m0, cov0, m1, cov1))
+
+
+def test_mvns():
+    x = jnp.array([1., 2., 3.3])
+    m = jnp.array([0.2, 0.1, 0.4])
+    cov = jnp.array([[1., 0.1, 0.2],
+                     [0.1, 2., 0.1],
+                     [0.2, 0.1, 2.5]])
+    eigvals, eigvecs = jnp.linalg.eigh(cov)
+
+    npt.assert_allclose(logpdf_mvn(x, m, eigvecs, eigvals), jax.scipy.stats.multivariate_normal.logpdf(x, m, cov))

@@ -1,4 +1,5 @@
 import jax
+import math
 import jax.numpy as jnp
 from gfk.typings import JArray, JKey
 from typing import Callable
@@ -84,7 +85,7 @@ def euler_maruyama(key: JKey, x0: JArray, ts: JArray,
         def scan_body_(carry, elem):
             x = carry
             rnd, t_ = elem
-            x = x + drift(x, t_) * ddt + dispersion(x, t_) * jnp.sqrt(ddt) * rnd
+            x = x + drift(x, t_) * ddt + dispersion(t_) * jnp.sqrt(ddt) * rnd
             return x, None
 
         ddt = jnp.abs(t_next - t) / integration_nsteps
@@ -104,3 +105,18 @@ def euler_maruyama(key: JKey, x0: JArray, ts: JArray,
         return nconcat(x0, path)
     else:
         return terminal_val
+
+
+def sampling_gm(key, ws, ms, eigvals, eigvecs):
+    n, d = ws.shape[0], ms.shape[1]
+    key_cat, key_nor = jax.random.split(key)
+
+    ind = jax.random.choice(key_cat, n, p=ws)
+    return ms[ind] + eigvecs[ind] @ (eigvals[ind] ** 0.5 * jax.random.normal(key_nor, (d,)))
+
+
+def logpdf_mvn(x, m, eigvecs, eigvals):
+    n = m.shape[0]
+    res = x - m
+    c_ = eigvecs.T @ res
+    return -0.5 * (jnp.dot(c_, c_ / eigvals) + jnp.sum(jnp.log(eigvals)) + n * math.log(2 * math.pi))

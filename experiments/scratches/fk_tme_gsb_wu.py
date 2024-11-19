@@ -5,7 +5,7 @@ import math
 import matplotlib.pyplot as plt
 from gfk.synthetic_targets import make_gsb
 from gfk.tools import bures
-from gfk.feynman_kac import make_fk_normal_likelihood
+from gfk.feynman_kac import make_fk_wu_normal
 from gfk.resampling import stratified
 from functools import partial
 
@@ -13,7 +13,7 @@ jax.config.update("jax_enable_x64", True)
 key = jax.random.PRNGKey(1)
 
 # Define the data
-dim = 20
+dim = 100
 m_ref, cov_ref, mT, covT, drift, dispersion, log_likelihood, obs_op, obs_cov, posterior_m_cov = make_gsb(key, d=dim)
 chol_ref = jnp.linalg.cholesky(cov_ref)
 y = jnp.zeros(dim)
@@ -36,35 +36,16 @@ def m0(key_):
     return ref_sampler(key_, n=nparticles)
 
 
-# Define the auxiliary process
-a = -0.5
-
-
-def aux_trans_op(i):
-    return jnp.exp(a * (ts[i + 1] - ts[i]))
-
-
-def aux_semigroup(n, m):
-    return jnp.exp(a * (ts[n] - ts[m]))
-
-
-def aux_trans_var(i):
-    return 1 / (2 * a) * (jnp.exp(2 * a * (ts[i + 1] - ts[i])) - 1)
-
-
-ys = jax.vmap(lambda n: aux_semigroup(n, 0) * y, in_axes=0)(jnp.arange(nsteps + 1))
-vs = ys[::-1]
-
 # Do conditional sampling
 nparticles = 10000
 
 # The
-smc_sampler = make_fk_normal_likelihood(obs_op, obs_cov, drift, dispersion, aux_trans_op, aux_semigroup, aux_trans_var,
-                                        ts, mode='bootstrap')
+langevin_step_size = dt
+smc_sampler = make_fk_wu_normal(obs_op, obs_cov, drift, dispersion, ts, y, langevin_step_size, mode='bootstrap')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-usT, log_wsT, esss = smc_sampler(subkey, m0, vs, nparticles, stratified, 0.3, False)
+usT, log_wsT, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.3, False)
 
 key, subkey = jax.random.split(key)
 

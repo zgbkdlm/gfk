@@ -121,6 +121,17 @@ def _make_bootstrap_tme(ts, log_likelihood, drift, dispersion, order, nparticles
     pass
 
 
+def _make_common(rev_drift, rev_dispersion):
+    def r(us, t_k, t_kp1):
+        return us + rev_drift(us, t_k) * (t_kp1 - t_k)
+
+    def rev_c(t_k, t_kp1):
+        """= C(N - k)"""
+        return rev_dispersion(t_k) ** 2 * (t_kp1 - t_k)
+
+    return r, rev_c
+
+
 def make_fk_normal_likelihood(obs_op, obs_cov,
                               rev_drift, rev_dispersion,
                               aux_trans_op, aux_semigroup, aux_trans_var,
@@ -160,12 +171,7 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
     """
     nsteps = ts.shape[0] - 1
 
-    def r(us, t_k, t_kp1):
-        return us + rev_drift(us, t_k) * (t_kp1 - t_k)
-
-    def rev_c(t_k, t_kp1):
-        """= C(N - k)"""
-        return rev_dispersion(t_k) ** 2 * (t_kp1 - t_k)
+    r, rev_c = _make_common(rev_drift, rev_dispersion)
 
     def rev_trans_var(i):
         return rev_dispersion(ts[nsteps - i]) ** 2 * (ts[i] - ts[i - 1])
@@ -227,9 +233,6 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
                 - log_lk(v_km1, u_km1, k - 1) - logpdf_m(u_k, u_km1, tree_param))
 
     obs_ops, obs_covs = pushfwd_normal_batch(obs_op, obs_cov, aux_trans_op, aux_trans_var, rev_trans_var, nsteps)
-    # chols = [jnp.linalg.cholesky(rev_obs_op @ rev_obs_op.T * rev_c(t_km1, t_k) + rev_obs_cov) for
-    #          (rev_obs_op, rev_obs_cov, t_km1, t_k) in zip(obs_ops[-2::-1], obs_covs[-2::-1], ts[:-1], ts[1:])]
-
     chols = jax.vmap(lambda rev_obs_op, rev_obs_cov, t_km1, t_k: jnp.linalg.cholesky(
         rev_obs_op @ rev_obs_op.T * rev_c(t_km1, t_k) + rev_obs_cov), in_axes=(0, 0, 0, 0))(obs_ops[-2::-1],
                                                                                             obs_covs[-2::-1], ts[:-1],
@@ -246,7 +249,107 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
                                nparticles, nsteps, resampling, resampling_threshold,
                                return_path)
 
+    def bs_m(key, us, tree_param):
+        _, _, t_km1, t_k, _, _ = tree_param
+        cond_ms = jax.vmap(r, in_axes=[0, None, None])(us, t_km1, t_k)
+        cond_scale = rev_c(t_km1, t_k) ** 0.5
+        return cond_ms + cond_scale * jax.random.normal(key, shape=us.shape)
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def bs_log_g(u_k, u_km1, tree_param):
+        v_k, v_km1, t_km1, t_k, k, _ = tree_param
+        return log_lk(v_k, u_k, k) - log_lk(v_km1, u_km1, k - 1)
+
+    def bootstrap_smc(key, m0, vs, nparticles, resampling, resampling_threshold, return_path):
+
+        @partial(jax.vmap, in_axes=[0])
+        def log_g0(us):
+            return log_lk(vs[0], us, 0)
+
+        return smc_feynman_kac(key, m0, log_g0, bs_m, bs_log_g,
+                               (vs[:-1], vs[1:], ts[:-1], ts[1:], jnp.arange(1, nsteps + 1), chols),
+                               nparticles, nsteps, resampling, resampling_threshold,
+                               return_path)
+
     if mode == 'guided':
         return guided_smc
+    elif mode == 'bootstrap':
+        return bootstrap_smc
     else:
-        raise NotImplementedError(f"Unknown mode: {mode}")
+        raise ValueError('Invalid mode.')
+
+
+def make_fk_wu_normal(obs_op, obs_cov,
+                      rev_drift, rev_dispersion,
+                      ts, y, langevin_step_size: float,
+                      mode):
+    """Generate the Feynamn--Kac model for Wu's construction.
+    """
+    nsteps, T = ts.shape[0] - 1, ts[-1]
+    r, rev_c = _make_common(rev_drift, rev_dispersion)
+
+    def sample_terminal_euler(u, t):
+        return u + rev_drift(u, t) * (T - t)
+
+    def sample_terminal_tweedie(u, t):
+        pass
+
+    def logpdf_rev_transition(u_k, u_km1, t_k, t_km1):
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, r(u_km1, t_km1, t_k), rev_c(t_km1, t_k) ** 0.5), axis=-1)
+
+    def _langevin_drift(u_k, u_km1, t_k, t_km1):
+        return 0.5 * (jax.grad(logpdf_rev_transition,
+                               argnums=0)(u_k, u_km1, t_k, t_km1) + jax.grad(log_lk,
+                                                                             argnums=0)(u_k, t_k))
+
+    def m(key, us, tree_param):
+        t_km1, t_k = tree_param
+        mean_ = us + langevin_step_size * jax.vmap(_langevin_drift, in_axes=[0, 0, None, None])(us, us, t_k, t_km1)
+        return mean_ + jax.random.normal(key, us.shape) * langevin_step_size ** 0.5
+
+    def logpdf_m(u_k, u_km1, tree_param):
+        t_km1, t_k = tree_param
+        mean_ = u_km1 + langevin_step_size * _langevin_drift(u_km1, u_km1, t_k, t_km1)
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, langevin_step_size ** 0.5))
+
+    def log_lk(u_k, t_k):
+        u_N = sample_terminal_euler(u_k, t_k)
+        return jax.scipy.stats.multivariate_normal.logpdf(y, obs_op @ u_N, obs_cov)
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def log_g(u_k, u_km1, tree_param):
+        t_km1, t_k = tree_param
+        return (log_lk(u_k, t_k) + logpdf_rev_transition(u_k, u_km1, t_k, t_km1)
+                - log_lk(u_km1, t_km1) - logpdf_m(u_k, u_km1, tree_param))
+
+    @partial(jax.vmap, in_axes=[0])
+    def log_g0(us):
+        return log_lk(us, ts[0])
+
+    def guided_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
+        return smc_feynman_kac(key, m0, log_g0, m, log_g,
+                               (ts[:-1], ts[1:]),
+                               nparticles, nsteps, resampling, resampling_threshold, return_path)
+
+    def bs_m(key, us, tree_param):
+        t_km1, t_k = tree_param
+        cond_ms = jax.vmap(r, in_axes=[0, None, None])(us, t_km1, t_k)
+        cond_scale = rev_c(t_km1, t_k) ** 0.5
+        return cond_ms + cond_scale * jax.random.normal(key, shape=us.shape)
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def bs_log_g(u_k, u_km1, tree_param):
+        t_km1, t_k = tree_param
+        return log_lk(u_k, t_k) - log_lk(u_km1, t_km1)
+
+    def bootstrap_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
+        return smc_feynman_kac(key, m0, log_g0, bs_m, bs_log_g,
+                               (ts[:-1], ts[1:]),
+                               nparticles, nsteps, resampling, resampling_threshold, return_path)
+
+    if mode == 'guided':
+        return guided_smc
+    elif mode == 'bootstrap':
+        return bootstrap_smc
+    else:
+        raise ValueError('Invalid mode.')
