@@ -1,13 +1,10 @@
 import jax
 import jax.numpy as jnp
-import numpy as np
-import math
 import matplotlib.pyplot as plt
-from gfk.synthetic_targets import make_gaussian_mixture
-from gfk.tools import bures
+from gfk.synthetic_targets import make_gaussian_mixture, gm_lin_posterior
+from gfk.tools import logpdf_gm, sampling_gm
 from gfk.feynman_kac import make_fk_wu_normal
 from gfk.resampling import stratified
-from functools import partial
 
 jax.config.update("jax_enable_x64", True)
 key = jax.random.PRNGKey(1)
@@ -15,53 +12,77 @@ key = jax.random.PRNGKey(1)
 # Define the forward process
 a, b = -0.5, 1.
 
+
+def fwd_drift(x, t):
+    return a * x
+
+
 # Times
-T = 1.
-nsteps = 128
+t0, T = 0., 1.
+nsteps = 64
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
 # Define the data
 dim = 2
-make_gaussian_mixture(ws, ms, eigvals, eigvecs, a, b, t0, T)
-m_ref, cov_ref, mT, covT, drift, dispersion, log_likelihood, obs_op, obs_cov, posterior_m_cov = make_gsb(key, d=dim)
-chol_ref = jnp.linalg.cholesky(cov_ref)
-y = jnp.zeros(dim)
+ws = jnp.array([0.1, 0.5, 0.2, 0.2])
+ms = jnp.array([[2., 2.],
+                [2., -2.],
+                [-2., -2.],
+                [-2., 2.]])
+c1_ = jnp.array([[1., 0.2], [0.2, 0.5]])
+c2_ = jnp.array([[1., -0.2], [-0.2, 0.5]])
+c3_ = jnp.array([[0.5, 0.2], [0.2, 1.]])
+c4_ = jnp.array([[2., 0.], [0., 1.]])
+covs = jnp.concatenate([c1_[jnp.newaxis], c2_[jnp.newaxis], c3_[jnp.newaxis], c4_[jnp.newaxis]]) * 0.1
+eigvals, eigvecs = jnp.linalg.eigh(covs)
+wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gaussian_mixture(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
+# Define the observation operator and the observation covariance
+key, subkey = jax.random.split(key)
+obs_op = jax.random.uniform(subkey, (1, dim))
+obs_cov = jnp.eye(1)
 
-def ref_sampler(key_, n: int = 1):
-    """The reference distribution is a standard Normal.
-    """
-    return m_ref + jnp.einsum('ij,nj->ni', chol_ref, jax.random.normal(key_, shape=(n, dim)))
+y = jnp.ones(1)
+posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
+posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
 
 # Define the Feynman--Kac model and the SMC sampler. See Equation (4.4).
 def m0(key_):
-    return ref_sampler(key_, n=nparticles)
+    keys_ = jax.random.split(key_, num=nparticles)
+    return jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys_, wTs, mTs, eigvalTs, eigvecs)
 
 
 # Do conditional sampling
-nparticles = 10000
+nparticles = 1024
 
 # The
 langevin_step_size = dt
-smc_sampler = make_fk_wu_normal(obs_op, obs_cov, drift, dispersion, ts, y, langevin_step_size, mode='bootstrap')
+smc_sampler = make_fk_wu_normal(obs_op, obs_cov,
+                                rev_drift, rev_dispersion,
+                                fwd_drift, score,
+                                ts, y, langevin_step_size,
+                                mode='guided',
+                                proposal='langevin')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
 usT, log_wsT, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.3, False)
 
 key, subkey = jax.random.split(key)
+keys = jax.random.split(subkey, num=256)
+post_samples = jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys, posterior_ws, posterior_ms,
+                                                                          eigvalTs, eigvecs)
 
-post_m, post_cov = posterior_m_cov(y)
-approx_m = jnp.einsum('si,s->i', usT, jnp.exp(log_wsT))
-approx_cov = jnp.einsum('si,sj,s->ij', usT - approx_m, usT - approx_m, jnp.exp(log_wsT))
+grid = jnp.linspace(-8, 8, 1000)
+meshgrid = jnp.meshgrid(grid, grid)
+cartesian = jnp.dstack(meshgrid)
+logpdf = lambda x_: logpdf_gm(x_, posterior_ws, posterior_ms, posterior_covs)
+pdfs = jax.vmap(jax.vmap(logpdf))(cartesian)
+plt.contour(*meshgrid, pdfs, levels=50)
 
-print(bures(post_m, post_cov, approx_m, approx_cov))
+plt.scatter(usT[:, 0], usT[:, 1], s=1)
+plt.scatter(post_samples[:, 0], post_samples[:, 1], facecolors='none', edgecolors='tab:red', s=20)
 
-plt.plot(esss)
-plt.show()
-
-plt.plot(post_m)
-plt.plot(approx_m)
 plt.show()

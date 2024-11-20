@@ -2,7 +2,7 @@ import jax
 import math
 import jax.numpy as jnp
 from gfk.typings import JArray, JKey, Array
-from typing import Callable
+from typing import Callable, Sequence
 
 
 def nconcat(a: JArray, b: JArray) -> JArray:
@@ -125,14 +125,14 @@ def sampling_gm(key: JKey, ws: Array, ms: Array, eigvals: Array, eigvecs: Array)
 
     Returns
     -------
-    JAarray (d, )
+    JAarray (shape, d)
         A sample from the Gaussian mixture distribution.
     """
     n, d = ws.shape[0], ms.shape[1]
     key_cat, key_nor = jax.random.split(key)
 
     ind = jax.random.choice(key_cat, n, p=ws)
-    return ms[ind] + eigvecs[ind] @ (eigvals[ind] ** 0.5 * jax.random.normal(key_nor, (d,)))
+    return ms[ind] + eigvecs[ind] @ (eigvals[ind] ** 0.5 * jax.random.normal(key_nor, (d, )))
 
 
 def logpdf_mvn(x, m, eigvecs, eigvals):
@@ -142,3 +142,8 @@ def logpdf_mvn(x, m, eigvecs, eigvals):
     res = x - m
     c_ = eigvecs.T @ res
     return -0.5 * (jnp.dot(c_, c_ / eigvals) + jnp.sum(jnp.log(eigvals)) + n * math.log(2 * math.pi))
+
+
+def logpdf_gm(x, ws, ms, covs):
+    return jax.scipy.special.logsumexp(
+        jax.vmap(jax.scipy.stats.multivariate_normal.logpdf, in_axes=[None, 0, 0])(x, ms, covs), b=ws)

@@ -280,9 +280,10 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
 
 
 def make_fk_wu_normal(obs_op, obs_cov,
-                      rev_drift, rev_dispersion,
+                      rev_drift, rev_dispersion, fwd_drift, score,
                       ts, y, langevin_step_size: float,
-                      mode):
+                      mode: str = 'guided',
+                      proposal: str = 'langevin'):
     """Generate the Feynamn--Kac model for Wu's construction.
     """
     nsteps, T = ts.shape[0] - 1, ts[-1]
@@ -290,9 +291,6 @@ def make_fk_wu_normal(obs_op, obs_cov,
 
     def sample_terminal_euler(u, t):
         return u + rev_drift(u, t) * (T - t)
-
-    def sample_terminal_tweedie(u, t):
-        pass
 
     def logpdf_rev_transition(u_k, u_km1, t_k, t_km1):
         return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, r(u_km1, t_km1, t_k), rev_c(t_km1, t_k) ** 0.5), axis=-1)
@@ -302,15 +300,34 @@ def make_fk_wu_normal(obs_op, obs_cov,
                                argnums=0)(u_k, u_km1, t_k, t_km1) + jax.grad(log_lk,
                                                                              argnums=0)(u_k, t_k))
 
-    def m(key, us, tree_param):
+    def m_langevin(key, us, tree_param):
         t_km1, t_k = tree_param
         mean_ = us + langevin_step_size * jax.vmap(_langevin_drift, in_axes=[0, 0, None, None])(us, us, t_k, t_km1)
         return mean_ + jax.random.normal(key, us.shape) * langevin_step_size ** 0.5
 
-    def logpdf_m(u_k, u_km1, tree_param):
+    def logpdf_m_langevin(u_k, u_km1, tree_param):
         t_km1, t_k = tree_param
         mean_ = u_km1 + langevin_step_size * _langevin_drift(u_km1, u_km1, t_k, t_km1)
         return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, langevin_step_size ** 0.5))
+
+    def _cond_rev_drift(u, t):
+        return (-fwd_drift(u, T - T)
+                + rev_dispersion(T - t) ** 2 * (score(u, T - t) + jax.grad(log_lk, argnums=0)(u, T - t)))
+
+    def m_direct(key, us, tree_param):
+        t_km1, t_k = tree_param
+        mean_ = us + jax.vmap(_cond_rev_drift, in_axes=[0, None])(us, t_km1) * (t_k - t_km1)
+        scale_ = rev_c(t_km1, t_k) ** 0.5
+        return mean_ + jax.random.normal(key, us.shape) * scale_
+
+    def logpdf_m_direct(u_k, u_km1, tree_param):
+        t_km1, t_k = tree_param
+        mean_ = u_km1 + _cond_rev_drift(u_km1, t_km1) * (t_k - t_km1)
+        scale_ = rev_c(t_km1, t_k) ** 0.5
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, scale_))
+
+    m = m_langevin if proposal == 'langevin' else m_direct
+    logpdf_m = logpdf_m_langevin if proposal == 'langevin' else logpdf_m_direct
 
     def log_lk(u_k, t_k):
         u_N = sample_terminal_euler(u_k, t_k)
