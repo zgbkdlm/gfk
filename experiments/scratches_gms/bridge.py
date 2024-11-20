@@ -3,21 +3,16 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from ott.tools.sliced import sliced_wasserstein
 from gfk.synthetic_targets import make_gaussian_mixture, gm_lin_posterior
-from gfk.tools import logpdf_gm, sampling_gm
-from gfk.feynman_kac import make_fk_wu_normal
+from gfk.tools import logpdf_gm, sampling_gm, logpdf_mvn
+from gfk.feynman_kac import make_fk_bridge
 from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
 key = jax.random.PRNGKey(312)
 
-# Define the forward process
+# Define the forward prior process
 a, b = -0.5, 1.
-
-
-def fwd_drift(x, t):
-    return a * x
-
 
 # Times
 t0, T = 0., 1.
@@ -38,6 +33,25 @@ y = jnp.ones(dy) * 1
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
+obs_eigvals, obs_eigvecs = jnp.linalg.eigh(obs_cov)
+
+
+def logpdf_target_ll(y_, x):
+    return logpdf_mvn(y_, obs_op @ x, obs_eigvals, obs_eigvecs)
+
+
+# Define the reference likelihood
+# Design a one that is as informative as possible
+def logpdf_ref_ll(y_, x):
+    return logpdf_mvn(y_, obs_op @ x, obs_eigvals * 0., obs_eigvecs) ...
+
+# Define the interpolation process
+def alpha(t):
+    return jax.lax.cond(t == T,
+                        lambda _: 1.,
+                        lambda _: 1 - jnp.exp(-2. * t / T),???
+                        None)
+
 
 # Define the Feynman--Kac model and the SMC sampler. See Equation (4.4).
 def m0(key_):
@@ -45,21 +59,21 @@ def m0(key_):
     return jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys_, wTs, mTs, eigvalTs, eigvecs)
 
 
+# Define the interpolation process
+ys = jax.vmap(lambda n: aux_semigroup(n, 0) * y, in_axes=0)(jnp.arange(nsteps + 1))
+vs = ys[::-1]
+
 # Do conditional sampling
 nparticles = 1024
 
-# The
-langevin_step_size = dt
-smc_sampler = make_fk_wu_normal(obs_op, obs_cov,
-                                rev_drift, rev_dispersion,
-                                fwd_drift, score,
-                                ts, y, langevin_step_size,
-                                mode='bootstrap',
-                                proposal='direct')
+# The sampler
+smc_sampler = make_fk_normal_likelihood(obs_op, obs_cov, rev_drift, rev_dispersion,
+                                        aux_trans_op, aux_semigroup, aux_trans_var,
+                                        ts, mode='bootstrap')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-usT, log_wsT, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, False)
+usT, log_wsT, esss = smc_sampler(subkey, m0, vs, nparticles, stratified, 0.7, False)
 plt.plot(esss)
 plt.show()
 
@@ -74,5 +88,4 @@ key, subkey = jax.random.split(key)
 inds = stratified(subkey, jnp.exp(log_wsT))
 plt.scatter(usT[inds, 0], usT[inds, 1], s=1)
 plt.scatter(post_samples[:, 0], post_samples[:, 1], facecolors='none', edgecolors='tab:red', s=20, alpha=.3)
-
 plt.show()

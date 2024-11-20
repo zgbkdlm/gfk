@@ -103,10 +103,10 @@ def bridge():
     pass
 
 
-def make_proxy_log_likelihood(ref_ll: Callable[[Array, Array], FloatScalar],
-                              target_ll: Callable[[Array, Array], FloatScalar],
-                              T: NumericScalar,
-                              log: bool = True) -> Callable[[Array, Array, FloatScalar], FloatScalar]:
+def bridge_log_likelihood(ref_ll: Callable[[Array, Array], FloatScalar],
+                          target_ll: Callable[[Array, Array], FloatScalar],
+                          alpha: Callable[[NumericScalar], FloatScalar],
+                          log: bool = False) -> Callable[[Array, Array, FloatScalar], FloatScalar]:
     """Make an interpolating proxy log-likelihood between the reference and target log-likelihoods.
 
     Parameters
@@ -115,10 +115,10 @@ def make_proxy_log_likelihood(ref_ll: Callable[[Array, Array], FloatScalar],
         The reference log-likelihood function.
     target_ll : Callable (dy, dx) -> float
         The target log-likelihood function.
-    T : number
-        A number that normalises the interpolating factor.
+    alpha : number -> float
+        A function that computes the interpolation parameter. Its value should start from 0 and end at 1.
     log : bool, default=True
-        Interpolating the log pdf or the pdf.
+        Bridging the log pdf or the pdf.
 
     Returns
     -------
@@ -126,16 +126,16 @@ def make_proxy_log_likelihood(ref_ll: Callable[[Array, Array], FloatScalar],
         The interpolating proxy log-likelihood function.
     """
 
-    def proxy_ll(y, x, t):
-        alpha = t / T
-        log_ref = ref_ll(x)
-        log_tar = target_ll(x)
+    def bridged_ll(y, x, t):
+        alp = alpha(t)
+        log_ref = ref_ll(y, x)
+        log_tar = target_ll(y, x)
 
         if log:
-            return (1 - alpha) * log_ref + alpha * log_tar
+            return (1 - alp) * log_ref + alp * log_tar
         else:
-            bs = jnp.array([1 - alpha, alpha])
+            bs = jnp.array([1 - alp, alp])
             vs = jnp.array([log_ref, log_tar])
             return jax.scipy.special.logsumexp(a=vs, b=bs)
 
-    return proxy_ll
+    return bridged_ll
