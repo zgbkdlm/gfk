@@ -161,7 +161,7 @@ def make_gsb(key: JKey,
     return m_ref, cov_ref, m, cov, drift, dispersion, log_linear_likelihood, h, r, posterior_linear
 
 
-def make_gaussian_mixture(ws, ms, eigvals, eigvecs, a, b, t0, T):
+def make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T):
     def drift(x, t):
         return a * x
 
@@ -172,7 +172,7 @@ def make_gaussian_mixture(ws, ms, eigvals, eigvecs, a, b, t0, T):
         dt = t - t0
         pushfwd_m = jnp.exp(a * dt) * m
         pushfwd_d = jnp.exp(2 * a * dt) * d + (b ** 2 / (2 * a) * (jnp.exp(2 * a * dt) - 1))
-        return logpdf_mvn(x, pushfwd_m, u, pushfwd_d)
+        return logpdf_mvn(x, pushfwd_m, pushfwd_d, u)
 
     def logpdf(x, t):
         return jax.scipy.special.logsumexp(

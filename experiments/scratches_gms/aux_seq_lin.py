@@ -4,14 +4,14 @@ import matplotlib.pyplot as plt
 from ott.tools.sliced import sliced_wasserstein
 from gfk.synthetic_targets import make_gm_bridge, gm_lin_posterior
 from gfk.tools import logpdf_gm, sampling_gm
-from gfk.feynman_kac import make_fk_wu
+from gfk.feynman_kac import make_fk_seq_lin
 from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
 key = jax.random.PRNGKey(157)
 
-# Define the forward process
+# Define the forward prior process
 a, b = -0.5, 1.
 
 
@@ -45,20 +45,33 @@ def m0(key_):
     return jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys_, wTs, mTs, eigvalTs, eigvecs)
 
 
+# Define the auxiliary process
+aux_a, aux_b = -0.5, 1.
+
+
+def aux_semigroup(n, m):
+    return jnp.exp(aux_a * (ts[n] - ts[m]))
+
+
+def aux_inv_semigroup(k):
+    return 1. / aux_semigroup(nsteps - k, 0)
+
+
+ys = jax.vmap(lambda n: aux_semigroup(n, 0) * y, in_axes=0)(jnp.arange(nsteps + 1))
+vs = ys[::-1]
+
 # Do conditional sampling
 nparticles = 1024
 
-# The
-langevin_step_size = dt * 2
-smc_sampler = make_fk_wu(lambda y_, u: jax.scipy.stats.multivariate_normal.logpdf(y_, obs_op @ u, obs_cov),
-                         rev_drift, rev_dispersion,
-                         ts, y, langevin_step_size,
-                         mode='guided',
-                         proposal='direct')
+# The sampler
+smc_sampler = make_fk_seq_lin(lambda y_, u: jax.scipy.stats.multivariate_normal.logpdf(y_, obs_op @ u, obs_cov),
+                              rev_drift, rev_dispersion,
+                              aux_inv_semigroup,
+                              ts, mode='guided')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-usT, log_wsT, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, False)
+usT, log_wsT, esss = smc_sampler(subkey, m0, vs, nparticles, stratified, 0.7, False)
 plt.plot(esss)
 plt.show()
 
@@ -73,5 +86,4 @@ key, subkey = jax.random.split(key)
 inds = stratified(subkey, jnp.exp(log_wsT))
 plt.scatter(usT[inds, 0], usT[inds, 1], s=1)
 plt.scatter(post_samples[:, 0], post_samples[:, 1], facecolors='none', edgecolors='tab:red', s=20, alpha=.3)
-
 plt.show()

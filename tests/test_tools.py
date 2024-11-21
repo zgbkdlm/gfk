@@ -43,4 +43,4 @@ def test_mvns():
                      [0.2, 0.1, 2.5]])
     eigvals, eigvecs = jnp.linalg.eigh(cov)
 
-    npt.assert_allclose(logpdf_mvn(x, m, eigvecs, eigvals), jax.scipy.stats.multivariate_normal.logpdf(x, m, cov))
+    npt.assert_allclose(logpdf_mvn(x, m, eigvals, eigvecs), jax.scipy.stats.multivariate_normal.logpdf(x, m, cov))

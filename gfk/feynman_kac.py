@@ -279,11 +279,120 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
         raise ValueError('Invalid mode.')
 
 
+def make_fk_seq_lin(logpdf_likelihood: Callable[[Array, Array], FloatScalar],
+                    rev_drift, rev_dispersion,
+                    aux_inv_semigroup,
+                    ts,
+                    mode: str = 'guided') -> Callable:
+    """Generate an SMC sampler corresponding to a Feynman--Kac model with a Gaussian likelihood.
+
+    Parameters
+    ----------
+    logpdf_likelihood : Callable (dy, dx) -> float
+        The target log-likelihood function.
+    rev_drift : Callable (..., float) -> (...)
+        The reversal drift function.
+    rev_dispersion : Callable (float) -> float
+        The reversal dispersion function.
+    aux_inv_semigroup : Callable (Int) -> float
+        The auxiliary diffusion's inverse semigroup.
+    ts : Array (N + 1)
+        The times t_0, t_1, ..., t_N.
+    mode : str, default='guided'
+        The mode of the SMC sampler. Currently, only 'guided' is supported.
+
+    Returns
+    -------
+    Callable
+        A constructed SMC sampler.
+
+    Notes
+    -----
+    For simplicity, we here assume that the aux process and the reversal dispersion are scalar.
+    """
+    nsteps = ts.shape[0] - 1
+
+    r, rev_c = _make_common(rev_drift, rev_dispersion)
+
+    def propagate(u_k, k):
+        def body(i, val):
+            return val + rev_drift(val, ts[i]) * (ts[i + 1] - ts[i])
+
+        return jax.lax.fori_loop(k, nsteps, body, u_k)
+
+    def logpdf_rev_transition(u_k, u_km1, t_k, t_km1):
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, r(u_km1, t_km1, t_k), rev_c(t_km1, t_k) ** 0.5), axis=-1)
+
+    def _cond_rev_drift(u, v, t, k):
+        # Note that the reverse-mode autodiff may not apply here due to a dynamic-size loop.
+        # return rev_drift(u, t) + rev_dispersion(t) ** 2 * jax.grad(log_lk, argnums=1)(v, u, k)
+        return rev_drift(u, t) + rev_dispersion(t) ** 2 * jax.jacfwd(log_lk, argnums=1)(v, u, k)
+
+    def m(key, us, tree_param):
+        _, v_k, t_km1, t_k, k = tree_param
+        mean_ = us + jax.vmap(_cond_rev_drift, in_axes=[0, None, None, None])(us, v_k, t_km1, k) * (t_k - t_km1)
+        return mean_ + jax.random.normal(key, us.shape) * (t_k - t_km1) ** 0.5
+
+    def logpdf_m(u_k, u_km1, tree_param):
+        _, v_k, t_km1, t_k, k = tree_param
+        mean_ = u_km1 + _cond_rev_drift(u_km1, v_k, t_km1, k) * (t_k - t_km1)
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, (t_k - t_km1) ** 0.5))
+
+    def log_lk(v_k, u_k, k):
+        return logpdf_likelihood(aux_inv_semigroup(k) * v_k, propagate(u_k, k))
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def log_g(u_k, u_km1, tree_param):
+        v_km1, v_k, t_km1, t_k, k = tree_param
+        return (log_lk(v_k, u_k, k) + logpdf_rev_transition(u_k, u_km1, t_k, t_km1)
+                - log_lk(v_km1, u_km1, k - 1) - logpdf_m(u_k, u_km1, tree_param))
+
+    def guided_smc(key, m0, vs, nparticles, resampling, resampling_threshold, return_path):
+
+        @partial(jax.vmap, in_axes=[0])
+        def log_g0(us):
+            return log_lk(vs[0], us, 0)
+
+        return smc_feynman_kac(key, m0, log_g0, m, log_g,
+                               (vs[:-1], vs[1:], ts[:-1], ts[1:], jnp.arange(1, nsteps + 1)),
+                               nparticles, nsteps, resampling, resampling_threshold,
+                               return_path)
+
+    def bs_m(key, us, tree_param):
+        _, _, t_km1, t_k, _ = tree_param
+        cond_ms = jax.vmap(r, in_axes=[0, None, None])(us, t_km1, t_k)
+        cond_scale = rev_c(t_km1, t_k) ** 0.5
+        return cond_ms + cond_scale * jax.random.normal(key, shape=us.shape)
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def bs_log_g(u_k, u_km1, tree_param):
+        v_km1, v_k, _, _, k = tree_param
+        return log_lk(v_k, u_k, k) - log_lk(v_km1, u_km1, k - 1)
+
+    def bootstrap_smc(key, m0, vs, nparticles, resampling, resampling_threshold, return_path):
+
+        @partial(jax.vmap, in_axes=[0])
+        def log_g0(us):
+            return log_lk(vs[0], us, 0)
+
+        return smc_feynman_kac(key, m0, log_g0, bs_m, bs_log_g,
+                               (vs[:-1], vs[1:], ts[:-1], ts[1:], jnp.arange(1, nsteps + 1)),
+                               nparticles, nsteps, resampling, resampling_threshold,
+                               return_path)
+
+    if mode == 'guided':
+        return guided_smc
+    elif mode == 'bootstrap':
+        return bootstrap_smc
+    else:
+        raise ValueError('Invalid mode.')
+
+
 def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
                    ll_ref: Callable[[Array, Array], FloatScalar],
                    alpha: Callable[[FloatScalar], FloatScalar],
                    rev_drift, rev_dispersion,
-                   ts, langevin_step_size: float,
+                   ts,
                    mode: str = 'guided') -> Callable:
     """Generate an SMC sampler corresponding to a Feynman--Kac model with a Gaussian likelihood.
 
@@ -326,15 +435,28 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
         return 0.5 * (jax.grad(logpdf_rev_transition,
                                argnums=0)(u_k, u_km1, t_k, t_km1) + jax.grad(log_lk, argnums=1)(v_k, u_k, t_k))
 
+    def _cond_rev_drift(u, v, t):
+        return rev_drift(u, t) + rev_dispersion(t) ** 2 * jax.grad(log_lk, argnums=1)(v, u, t)
+
+    # def m(key, us, tree_param):
+    #     _, v_k, t_km1, t_k = tree_param
+    #     mean_ = us + langevin_step_size * jax.vmap(_langevin_drift,
+    #                                                in_axes=[0, 0, None, None, None])(us, us, t_k, t_km1, v_k)
+    #     return mean_ + jax.random.normal(key, us.shape) * langevin_step_size ** 0.5
+    #
+    # def logpdf_m(u_k, u_km1, tree_param):
+    #     _, v_k, t_km1, t_k = tree_param
+    #     mean_ = u_km1 + langevin_step_size * _langevin_drift(u_km1, u_km1, t_k, t_km1, v_k)
+    #     return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, langevin_step_size ** 0.5))
     def m(key, us, tree_param):
         _, v_k, t_km1, t_k = tree_param
-        mean_ = us + langevin_step_size * jax.vmap(_langevin_drift, in_axes=[0, 0, None, None])(us, us, t_k, t_km1, v_k)
-        return mean_ + jax.random.normal(key, us.shape) * langevin_step_size ** 0.5
+        mean_ = us + jax.vmap(_cond_rev_drift, in_axes=[0, None, None])(us, v_k, t_km1) * (t_k - t_km1)
+        return mean_ + jax.random.normal(key, us.shape) * (t_k - t_km1) ** 0.5
 
     def logpdf_m(u_k, u_km1, tree_param):
         _, v_k, t_km1, t_k = tree_param
-        mean_ = u_km1 + langevin_step_size * _langevin_drift(u_km1, u_km1, t_k, t_km1, v_k)
-        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, langevin_step_size ** 0.5))
+        mean_ = u_km1 + _cond_rev_drift(u_km1, v_k, t_km1) * (t_k - t_km1)
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, (t_k - t_km1) ** 0.5))
 
     def log_lk(v_k, u_k, t_k):
         return bridge_log_likelihood(ll_ref, ll_target, alpha, log=False)(v_k, u_k, t_k)
@@ -349,7 +471,7 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
 
         @partial(jax.vmap, in_axes=[0])
         def log_g0(us):
-            return log_lk(vs[0], us, 0)
+            return log_lk(vs[0], us, ts[0])
 
         return smc_feynman_kac(key, m0, log_g0, m, log_g,
                                (vs[:-1], vs[1:], ts[:-1], ts[1:]),
@@ -357,7 +479,7 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
                                return_path)
 
     def bs_m(key, us, tree_param):
-        _, _, t_km1, t_k, _, _ = tree_param
+        _, _, t_km1, t_k = tree_param
         cond_ms = jax.vmap(r, in_axes=[0, None, None])(us, t_km1, t_k)
         cond_scale = rev_c(t_km1, t_k) ** 0.5
         return cond_ms + cond_scale * jax.random.normal(key, shape=us.shape)
@@ -371,7 +493,7 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
 
         @partial(jax.vmap, in_axes=[0])
         def log_g0(us):
-            return log_lk(vs[0], us, 0)
+            return log_lk(vs[0], us, ts[0])
 
         return smc_feynman_kac(key, m0, log_g0, bs_m, bs_log_g,
                                (vs[:-1], vs[1:], ts[:-1], ts[1:]),
@@ -386,11 +508,11 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
         raise ValueError('Invalid mode.')
 
 
-def make_fk_wu_normal(obs_op, obs_cov,
-                      rev_drift, rev_dispersion, fwd_drift, score,
-                      ts, y, langevin_step_size: float,
-                      mode: str = 'guided',
-                      proposal: str = 'langevin'):
+def make_fk_wu(ll_target,
+               rev_drift, rev_dispersion,
+               ts, y, langevin_step_size: float,
+               mode: str = 'guided',
+               proposal: str = 'langevin'):
     """Generate the Feynamn--Kac model for Wu's construction.
     """
     nsteps, T = ts.shape[0] - 1, ts[-1]
@@ -418,8 +540,7 @@ def make_fk_wu_normal(obs_op, obs_cov,
         return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, mean_, langevin_step_size ** 0.5))
 
     def _cond_rev_drift(u, t):
-        return (-fwd_drift(u, T - T)
-                + rev_dispersion(T - t) ** 2 * (score(u, T - t) + jax.grad(log_lk, argnums=0)(u, T - t)))
+        return rev_drift(u, t) + rev_dispersion(t) ** 2 * jax.grad(log_lk, argnums=0)(u, t)
 
     def m_direct(key, us, tree_param):
         t_km1, t_k = tree_param
@@ -438,7 +559,7 @@ def make_fk_wu_normal(obs_op, obs_cov,
 
     def log_lk(u_k, t_k):
         u_N = sample_terminal_euler(u_k, t_k)
-        return jax.scipy.stats.multivariate_normal.logpdf(y, obs_op @ u_N, obs_cov)
+        return ll_target(y, u_N)
 
     @partial(jax.vmap, in_axes=[0, 0, None])
     def log_g(u_k, u_km1, tree_param):

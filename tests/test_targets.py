@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
-from gfk.synthetic_targets import make_gsb, make_gaussian_mixture, gm_lin_posterior
+from gfk.synthetic_targets import make_gsb, make_gm_bridge, gm_lin_posterior
 from gfk.tools import sampling_gm, euler_maruyama
 from functools import partial
 
@@ -42,8 +42,8 @@ def test_gm():
         return jax.scipy.special.logsumexp(
             jax.vmap(jax.scipy.stats.multivariate_normal.logpdf, in_axes=[None, 0, 0])(x_, ms_, covs_), b=ws_)
 
-    wTs, mTs, dTs, score, rev_drift, rev_dispersion = make_gaussian_mixture(ws, ms, eigvals, eigvecs, a=-0.5, b=1.,
-                                                                            t0=0., T=1.)
+    wTs, mTs, dTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, eigvals, eigvecs, a=-0.5, b=1.,
+                                                                     t0=0., T=1.)
 
     x = jnp.ones(d)
     npt.assert_allclose(score(x, 0.), jax.grad(logpdf)(x, ms, covs, ws))

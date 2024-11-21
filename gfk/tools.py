@@ -135,7 +135,7 @@ def sampling_gm(key: JKey, ws: Array, ms: Array, eigvals: Array, eigvecs: Array)
     return ms[ind] + eigvecs[ind] @ (eigvals[ind] ** 0.5 * jax.random.normal(key_nor, (d, )))
 
 
-def logpdf_mvn(x, m, eigvecs, eigvals):
+def logpdf_mvn(x, m, eigvals, eigvecs):
     """Log pdf of a multivariate Normal distribution (without known eigendecomposition).
     """
     n = m.shape[0]

@@ -5,7 +5,7 @@ import math
 import matplotlib.pyplot as plt
 from gfk.synthetic_targets import make_gsb
 from gfk.tools import bures
-from gfk.feynman_kac import make_fk_wu_normal
+from gfk.feynman_kac import make_fk_wu
 from gfk.resampling import stratified
 from functools import partial
 
@@ -41,7 +41,7 @@ nparticles = 10000
 
 # The
 langevin_step_size = dt
-smc_sampler = make_fk_wu_normal(obs_op, obs_cov, drift, dispersion, ts, y, langevin_step_size, mode='bootstrap')
+smc_sampler = make_fk_wu(obs_op, obs_cov, drift, dispersion, ts, y, langevin_step_size, mode='bootstrap')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)

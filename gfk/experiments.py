@@ -15,9 +15,9 @@ def generate_gm(key, dx, dy, ncomponents):
     ms = jax.random.uniform(key_ms, minval=-5., maxval=5., shape=(ncomponents, dx))
 
     cov_rnds = jax.random.normal(key_covs, shape=(ncomponents, dx))
-    covs = (jnp.einsum('...i,...j->...ij', cov_rnds, cov_rnds) + jnp.eye(dx)[None, :, :]) * 0.1
+    covs = (jnp.einsum('...i,...j->...ij', cov_rnds, cov_rnds) + jnp.eye(dx)[None, :, :])
 
-    obs_op = jax.random.normal(key_obs_op, shape=(dy, dx))
+    obs_op = jax.random.uniform(key_obs_op, shape=(dy, dx))
     obs_cov_rnds = jax.random.normal(key_covs, shape=(dy, ))
     obs_cov = (jnp.outer(obs_cov_rnds, obs_cov_rnds) + jnp.eye(dy)) * 1.
     return ws, ms, covs, obs_op, obs_cov
