@@ -96,5 +96,5 @@ def test_gm():
     def computed_posterior_logpdf(x_):
         return logpdf(x_, posterior_ms, posterior_covs, posterior_ws)
 
-    x = jnp.zeros(d)
+    x = jnp.ones(d)
     npt.assert_allclose(jax.grad(computed_posterior_logpdf)(x), jax.grad(log_energy)(x))

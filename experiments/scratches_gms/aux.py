@@ -20,21 +20,21 @@ def fwd_drift(x, t):
 
 
 # Times
-t0, T = 0., 1.
-nsteps = 64
+t0, T = 0., 4
+nsteps = 256
 dt = T / nsteps
 ts = jnp.linspace(0., T, nsteps + 1)
 
 # Define the data
 key, subkey = jax.random.split(key)
-dx, dy = 2, 2
+dx, dy = 10, 2
 ncomponents = 5
 ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents)
 eigvals, eigvecs = jnp.linalg.eigh(covs)
 wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
 # Define the observation operator and the observation covariance
-y = jnp.array([-5, 5.])
+y = jnp.ones(dy) * 5
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
@@ -68,9 +68,9 @@ vs = ys[::-1]
 nparticles = 1024
 
 # The sampler
-smc_sampler = make_fk_normal_likelihood(obs_op, obs_cov, rev_drift, rev_dispersion,
-                                        aux_trans_op, aux_semigroup, aux_trans_var,
-                                        ts, mode='guided')
+smc_sampler, _ = make_fk_normal_likelihood(obs_op, obs_cov, rev_drift, rev_dispersion,
+                                           aux_trans_op, aux_semigroup, aux_trans_var,
+                                           ts, mode='guided')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
@@ -81,7 +81,7 @@ plt.show()
 key, subkey = jax.random.split(key)
 keys = jax.random.split(subkey, num=nparticles)
 post_samples = jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys, posterior_ws, posterior_ms,
-                                                                          eigvalTs, eigvecs)
+                                                                          posterior_eigvals, posterior_eigvecs)
 
 print(sliced_wasserstein(usT, post_samples, a=jnp.exp(log_wsT))[0])
 

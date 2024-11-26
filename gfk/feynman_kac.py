@@ -136,7 +136,7 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
                               rev_drift, rev_dispersion,
                               aux_trans_op, aux_semigroup, aux_trans_var,
                               ts,
-                              mode: str = 'guided') -> Callable:
+                              mode: str = 'guided') -> Tuple[Callable, Callable]:
     """Generate an SMC sampler corresponding to a Feynman--Kac model with a Gaussian likelihood.
 
     Parameters
@@ -272,9 +272,9 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
                                return_path)
 
     if mode == 'guided':
-        return guided_smc
+        return guided_smc, log_lk
     elif mode == 'bootstrap':
-        return bootstrap_smc
+        return bootstrap_smc, log_lk
     else:
         raise ValueError('Invalid mode.')
 

@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
 from functools import partial
-from gfk.feynman_kac import compute_ess, smc_feynman_kac
+from gfk.feynman_kac import compute_ess, smc_feynman_kac, make_fk_normal_likelihood
 from gfk.resampling import stratified
 from gfk.filters import kf
 
@@ -66,9 +66,38 @@ def test_fk_gaussian():
     npt.assert_allclose(smc_cov, vfs, atol=1e-1)
 
 
-def test_bootstrap_fk_validity(log_g0, log_g, log_likelihood):
-    # Partially test if the Feynman--Kac model is valid in the generative (twisted) context.
-    # If valid, the potentials should amount to the target likelihood.
-    key = jax.random.PRNGKey(666)
-    ts = jnp.linspace(0., 1., 100)
-    xss = jax.random.normal(key, (100, 1000, d))
+def test_fk_aux_normal():
+    np.random.seed(666)
+    obs_op = np.random.randn(5, 3)
+    _c = np.random.randn(5, 5)
+    obs_cov = _c @ _c.T
+    ts = jnp.linspace(0., 3., 101)
+
+    def rev_drift(u, t):
+        return u
+
+    def rev_dispersion(t):
+        return 1.
+
+    aux_a, aux_b = -1., 1.
+
+    def aux_trans_op(i):
+        return jnp.exp(aux_a * (ts[i + 1] - ts[i]))
+
+    def aux_semigroup(n, m):
+        return jnp.exp(aux_a * (ts[n] - ts[m]))
+
+    def aux_trans_var(i):
+        return aux_b ** 2 / (2 * aux_a) * (jnp.exp(2 * aux_a * (ts[i + 1] - ts[i])) - 1)
+
+    _, log_lk = make_fk_normal_likelihood(obs_op, obs_cov, rev_drift, rev_dispersion,
+                                          aux_trans_op, aux_semigroup, aux_trans_var,
+                                          ts, mode='guided')
+
+    def logpdf_ll(y_, x_):
+        return jax.scipy.stats.multivariate_normal.logpdf(y_, obs_op @ x_, obs_cov)
+
+    y = np.random.randn(5)
+    x = np.random.randn(3)
+
+    npt.assert_allclose(log_lk(y, x, 100), logpdf_ll(y, x), rtol=1e-10)
