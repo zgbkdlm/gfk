@@ -598,3 +598,94 @@ def make_fk_wu(ll_target,
         return bootstrap_smc
     else:
         raise ValueError('Invalid mode.')
+
+
+def make_mcgdiff(obs_op, obs_vars,
+                 rev_drift, rev_dispersion,
+                 alpha,
+                 ts, tau, y,
+                 mode: str = 'guided'):
+    """This deals with Y = H X + eps,  eps ~ N(0, v), where v is any diagonal.
+    This converts to U^T / sqrt(v) Y = S bar{V}^T / sqrt(v) X + N(0, I) = S / sqrt(v) bar{V^T X} + N(0, I)
+    """
+    # Convert to the inpainting basis with unitary variance
+    # I.e., Y = c bar{X} + N(0, I)
+    dy, dx = obs_op.shape
+    if dy > dx:
+        raise NotImplementedError('Not implemented for tall observation operators.')
+    if obs_vars.ndim > 1:
+        raise NotImplementedError('The observation covariance should be a diagonal (in 1D array format).')
+    U, S, VT = jnp.linalg.svd(obs_op, full_matrices=True)
+    scaled_y = U.T @ y / obs_vars ** 0.5
+    c = S / obs_vars ** 0.5
+
+    def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
+        fn_guided, fn_bootstrap = _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha, ts, scaled_y, c)
+        if mode == 'guided':
+            samples, log_ws, ess = fn_guided(key, m0, nparticles, resampling, resampling_threshold, return_path)
+        else:
+            samples, log_ws, ess = fn_guided(key, m0, nparticles, resampling, resampling_threshold, return_path)
+        return jnp.einsum('ji,...j->...i', VT, samples), log_ws, ess
+
+    return smc_sampler
+
+
+def _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray, c):
+    """This deals with Y = c bar{X} using MCGDiff. The same as with Y / c = bar{X}.
+
+    Notes
+    -----
+    alpha operates on the reverse time, and it cannot reach precisely 1. MCGDiff uses a square root on alpha, but
+    here we do not to keep consistent with other methods.
+    """
+    nsteps = ts.shape[0] - 1
+    scaled_y = y / c
+    dy = y.shape[0]
+    r, rev_c = _make_common(rev_drift, rev_dispersion)
+
+    def log_lk(u, t):
+        return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * scaled_y, (1 - alpha(t) ** 2) ** 0.5)
+
+    def m(key, us_km1, tree_param):
+        t_km1, t_k = tree_param
+        alp = alpha(t_k)
+        gain = (1 - alp ** 2) / (1 - alp ** 2 + rev_c(t_km1, t_k))
+        mean_ = gain * alp * scaled_y + (1 - gain) * r(us_km1, t_km1, t_k)[:dy]
+        var_ = gain * rev_c(t_km1, t_k)
+        return mean_ + var_ ** 0.5 * jax.random.normal(key, us_km1.shape)
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def log_g(u_k, u_km1, tree_param):
+        t_km1, t_k = tree_param
+        alp = alpha(t_k)
+        normalising_const = jax.scipy.stats.norm.logpdf(alp * scaled_y,
+                                                        r(u_km1, t_km1, t_k)[:dy],
+                                                        (1 - alp ** 2 + rev_c(t_km1, t_k)) ** 0.5)
+        return normalising_const / log_lk(u_km1, t_km1)
+
+    @partial(jax.vmap, in_axes=[0])
+    def log_g0(us):
+        return log_lk(us, ts[0])
+
+    def guided_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
+        return smc_feynman_kac(key, m0, log_g0, m, log_g,
+                               (ts[:-1], ts[1:]),
+                               nparticles, nsteps, resampling, resampling_threshold, return_path)
+
+    def bs_m(key, us, tree_param):
+        t_km1, t_k = tree_param
+        cond_ms = jax.vmap(r, in_axes=[0, None, None])(us, t_km1, t_k)
+        cond_scale = rev_c(t_km1, t_k) ** 0.5
+        return cond_ms + cond_scale * jax.random.normal(key, shape=us.shape)
+
+    @partial(jax.vmap, in_axes=[0, 0, None])
+    def bs_log_g(u_k, u_km1, tree_param):
+        t_km1, t_k = tree_param
+        return log_lk(u_k, t_k) - log_lk(u_km1, t_km1)
+
+    def bootstrap_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
+        return smc_feynman_kac(key, m0, log_g0, bs_m, bs_log_g,
+                               (ts[:-1], ts[1:]),
+                               nparticles, nsteps, resampling, resampling_threshold, return_path)
+
+    return guided_smc, bootstrap_smc
