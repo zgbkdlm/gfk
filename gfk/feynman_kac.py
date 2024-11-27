@@ -630,6 +630,10 @@ def make_mcgdiff(obs_op, obs_vars,
     return smc_sampler
 
 
+def _noisy_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray, c):
+    pass
+
+
 def _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray, c):
     """This deals with Y = c bar{X} using MCGDiff. The same as with Y / c = bar{X}.
 
