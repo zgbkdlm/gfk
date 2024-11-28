@@ -5,7 +5,7 @@ import math
 import jax
 import jax.numpy as jnp
 from gfk.likelihoods import pushfwd_normal, pushfwd_normal_batch, bridge_log_likelihood
-from gfk.tools import nconcat
+from gfk.tools import nconcat, euler_maruyama
 from gfk.typings import JArray, JKey, PyTree, FloatScalar, NumericScalar, Array
 from functools import partial
 from typing import Callable, Tuple
@@ -603,58 +603,115 @@ def make_fk_wu(ll_target,
 def make_mcgdiff(obs_op, obs_vars,
                  rev_drift, rev_dispersion,
                  alpha,
-                 ts, tau, y,
+                 y, ts, kappa,
                  mode: str = 'guided'):
     """This deals with Y = H X + eps,  eps ~ N(0, v), where v is any diagonal.
     This converts to U^T / sqrt(v) Y = S bar{V}^T / sqrt(v) X + N(0, I) = S / sqrt(v) bar{V^T X} + N(0, I)
+    Convert to the inpainting basis with unitary variance
+    I.e., U^T / sqrt(v) Y = c bar{X} + N(0, I)
+
+    Notes
+    -----
+    Tau must be fixed in order to use JIT. To do so, assume that everything except y is static.
     """
-    # Convert to the inpainting basis with unitary variance
-    # I.e., Y = c bar{X} + N(0, I)
+    nsteps = ts.shape[0] - 1
     dy, dx = obs_op.shape
     if dy > dx:
         raise NotImplementedError('Not implemented for tall observation operators.')
     if obs_vars.ndim > 1:
         raise NotImplementedError('The observation covariance should be a diagonal (in 1D array format).')
     U, S, VT = jnp.linalg.svd(obs_op, full_matrices=True)
-    scaled_y = U.T @ y / obs_vars ** 0.5
     c = S / obs_vars ** 0.5
+    scaled_y = U.T @ y / obs_vars ** 0.5 / c
 
+    # Compute tau
+    res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)
+    tau_ind = jnp.argmin(res)
+    tau = ts[tau_ind]
+    ts_smc, ts_is = ts[:tau_ind], ts[tau_ind:]
+    h = (1 - kappa) / alpha(tau) ** 2
+
+    def _err():
+        raise ValueError('Invalid tau.')
+
+    jax.lax.cond(tau_ind > nsteps - 2,
+                 lambda _: jax.debug.callback(_err),
+                 lambda _: 0.,
+                 0.)
+
+    # Run for noiseless MCGDiff + one-step importance sampling
     def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
-        fn_guided, fn_bootstrap = _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha, ts, scaled_y, c)
-        if mode == 'guided':
-            samples, log_ws, ess = fn_guided(key, m0, nparticles, resampling, resampling_threshold, return_path)
+        key_smc, key_is = jax.random.split(key)
+        samples, log_ws, esss = _noiseless_mcgdiff(key_smc, m0,
+                                                   rev_drift, rev_dispersion, alpha, ts_smc,
+                                                   scaled_y, kappa, tau,
+                                                   nparticles, resampling, resampling_threshold, return_path, mode)
+
+        if return_path:
+            us_tau = samples[-1]
+            log_ws_tau = log_ws[-1]
         else:
-            samples, log_ws, ess = fn_guided(key, m0, nparticles, resampling, resampling_threshold, return_path)
-        return jnp.einsum('ji,...j->...i', VT, samples), log_ws, ess
+            us_tau = samples
+            log_ws_tau = log_ws
+
+        # Do a one-step importance sampling
+        keys = jax.random.split(key_smc, num=nparticles)
+        _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, rev_drift, rev_dispersion,
+                                              integration_nsteps=1, return_path=return_path)
+        uss = jax.vmap(_em, in_axes=[0, 0])(keys, us_tau)
+        usT = uss[-1] if return_path else uss
+
+        @partial(jax.vmap, in_axes=[0, None])
+        def log_lk(u, t):
+            return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * scaled_y, (1 - h * alpha(t) ** 2) ** 0.5)
+
+        log_wsT = log_ws_tau + log_lk(usT, ts[-1]) - log_lk(us_tau, tau)
+        log_wsT = log_wsT - jax.scipy.special.logsumexp(log_wsT)
+        essT = compute_ess(log_ws)
+
+        if return_path:
+            samples = jnp.concatenate([samples, uss], axis=0)
+            log_wss = jnp.concatenate([log_ws, jnp.ones(nsteps - tau - 1) * log_ws_tau, log_wsT[None]])
+            esss = nconcat(esss, essT)
+        else:
+
+        return jnp.einsum('ji,...j->...i', VT, samplesT), log_wsT, esss
 
     return smc_sampler
 
 
 def _noisy_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray, c):
+    """This deals with Y = c bar{X} + N(0, 1) using MCGDiff.
+    """
     pass
 
 
-def _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray, c):
-    """This deals with Y = c bar{X} using MCGDiff. The same as with Y / c = bar{X}.
+def _noiseless_mcgdiff(key, m0,
+                       rev_drift, rev_dispersion, alpha: Callable,
+                       ts,
+                       y: JArray, kappa, tau,
+                       nparticles, resampling, resampling_threshold, return_path,
+                       mode: str = 'guided') -> Tuple[JArray, JArray, JArray]:
+    """This deals with Y = c bar{X} using MCGDiff.
 
     Notes
     -----
     alpha operates on the reverse time, and it cannot reach precisely 1. MCGDiff uses a square root on alpha, but
-    here we do not to keep consistent with other methods.
+    here we do not, to keep consistent with other methods.
     """
     nsteps = ts.shape[0] - 1
-    scaled_y = y / c
     dy = y.shape[0]
     r, rev_c = _make_common(rev_drift, rev_dispersion)
+    h = (1 - kappa) / alpha(tau) ** 2
 
     def log_lk(u, t):
-        return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * scaled_y, (1 - alpha(t) ** 2) ** 0.5)
+        return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * y, (1 - h * alpha(t) ** 2) ** 0.5)
 
     def m(key, us_km1, tree_param):
         t_km1, t_k = tree_param
         alp = alpha(t_k)
-        gain = (1 - alp ** 2) / (1 - alp ** 2 + rev_c(t_km1, t_k))
-        mean_ = gain * alp * scaled_y + (1 - gain) * r(us_km1, t_km1, t_k)[:dy]
+        gain = (1 - h * alp ** 2) / (1 - h * alp ** 2 + rev_c(t_km1, t_k))
+        mean_ = gain * alp * y + (1 - gain) * r(us_km1, t_km1, t_k)[:dy]
         var_ = gain * rev_c(t_km1, t_k)
         return mean_ + var_ ** 0.5 * jax.random.normal(key, us_km1.shape)
 
@@ -662,19 +719,14 @@ def _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray
     def log_g(u_k, u_km1, tree_param):
         t_km1, t_k = tree_param
         alp = alpha(t_k)
-        normalising_const = jax.scipy.stats.norm.logpdf(alp * scaled_y,
+        normalising_const = jax.scipy.stats.norm.logpdf(alp * y,
                                                         r(u_km1, t_km1, t_k)[:dy],
-                                                        (1 - alp ** 2 + rev_c(t_km1, t_k)) ** 0.5)
+                                                        (1 - h * alp ** 2 + rev_c(t_km1, t_k)) ** 0.5)
         return normalising_const / log_lk(u_km1, t_km1)
 
     @partial(jax.vmap, in_axes=[0])
     def log_g0(us):
         return log_lk(us, ts[0])
-
-    def guided_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
-        return smc_feynman_kac(key, m0, log_g0, m, log_g,
-                               (ts[:-1], ts[1:]),
-                               nparticles, nsteps, resampling, resampling_threshold, return_path)
 
     def bs_m(key, us, tree_param):
         t_km1, t_k = tree_param
@@ -687,9 +739,6 @@ def _noiseless_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray
         t_km1, t_k = tree_param
         return log_lk(u_k, t_k) - log_lk(u_km1, t_km1)
 
-    def bootstrap_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
-        return smc_feynman_kac(key, m0, log_g0, bs_m, bs_log_g,
-                               (ts[:-1], ts[1:]),
-                               nparticles, nsteps, resampling, resampling_threshold, return_path)
-
-    return guided_smc, bootstrap_smc
+    return smc_feynman_kac(key, m0, log_g0, m if mode == 'guided' else bs_m, log_g if mode == 'guided' else bs_log_g,
+                           (ts[:-1], ts[1:]),
+                           nparticles, nsteps, resampling, resampling_threshold, return_path)
