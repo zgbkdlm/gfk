@@ -30,7 +30,8 @@ eigvals, eigvecs = jnp.linalg.eigh(covs)
 wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
 # Define the observation operator and the observation covariance
-y = jnp.ones(dy) * 5
+y_likely = jnp.einsum('ij,kj,k->i', obs_op, ms, ws)
+y = y_likely + 10
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
@@ -44,7 +45,7 @@ def logpdf_target_ll(y_, x):
 # Define the reference likelihood
 # Design a one that is as informative as possible
 def logpdf_ref_ll(y_, x):
-    return logpdf_mvn(y_, obs_op @ x, obs_eigvals * jnp.exp(a * T), obs_eigvecs)
+    return logpdf_mvn(y_, obs_op @ x, obs_eigvals, obs_eigvecs)
 
 
 # Define the interpolation process
@@ -67,7 +68,7 @@ def m0(key_):
 
 
 # Do conditional sampling
-nparticles = 4096
+nparticles = 1024
 
 # The sampler
 langevin_step_size = dt * 2
@@ -77,7 +78,7 @@ smc_sampler = make_fk_bridge(logpdf_target_ll, logpdf_ref_ll, alpha,
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-uss, log_wss, esss = smc_sampler(subkey, m0, vs, nparticles, stratified, 1., True)
+uss, log_wss, esss = smc_sampler(subkey, m0, vs, nparticles, stratified, 0.7, True)
 plt.plot(esss)
 plt.show()
 
