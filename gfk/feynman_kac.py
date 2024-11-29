@@ -636,8 +636,8 @@ def make_mcgdiff(obs_op, obs_vars,
 
     jax.lax.cond(tau_ind > nsteps - 2,
                  lambda _: jax.debug.callback(_err),
-                 lambda _: 0.,
-                 0.)
+                 lambda _: None,
+                 None)
 
     # Run for noiseless MCGDiff + one-step importance sampling
     def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
@@ -672,18 +672,14 @@ def make_mcgdiff(obs_op, obs_vars,
         if return_path:
             samples = jnp.concatenate([samples, uss], axis=0)
             log_wss = jnp.concatenate([log_ws, jnp.ones(nsteps - tau - 1) * log_ws_tau, log_wsT[None]])
-            esss = nconcat(esss, essT)
         else:
+            samples = usT
+            log_wss = log_wsT
+        esss = jnp.concatenate([esss, jnp.ones(nsteps - tau - 1) * esss[-1], essT[None]])
 
-        return jnp.einsum('ji,...j->...i', VT, samplesT), log_wsT, esss
+        return jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
 
     return smc_sampler
-
-
-def _noisy_mcgdiff(rev_drift, rev_dispersion, alpha: Callable, ts, y: JArray, c):
-    """This deals with Y = c bar{X} + N(0, 1) using MCGDiff.
-    """
-    pass
 
 
 def _noiseless_mcgdiff(key, m0,
@@ -742,3 +738,7 @@ def _noiseless_mcgdiff(key, m0,
     return smc_feynman_kac(key, m0, log_g0, m if mode == 'guided' else bs_m, log_g if mode == 'guided' else bs_log_g,
                            (ts[:-1], ts[1:]),
                            nparticles, nsteps, resampling, resampling_threshold, return_path)
+
+
+def make_dc():
+    pass

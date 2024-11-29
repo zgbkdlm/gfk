@@ -34,7 +34,7 @@ eigvals, eigvecs = jnp.linalg.eigh(covs)
 wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
 # Define the observation operator and the observation covariance
-y = jnp.ones(dy) * 5
+y = jnp.ones(dy) * 10
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
