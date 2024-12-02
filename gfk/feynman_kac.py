@@ -659,37 +659,49 @@ def make_mcgdiff(obs_op, obs_cov,
 def _noiseless_mcgdiff(key, m0,
                        rev_drift, rev_dispersion, alpha: Callable,
                        ts,
-                       y: JArray, kappa, tau,
+                       y: JArray, obs_op_inv, kappa, tau,
                        nparticles, resampling, resampling_threshold, return_path,
                        mode: str = 'guided') -> Tuple[JArray, JArray, JArray]:
-    """This deals with Y = c bar{X} using MCGDiff.
+    """This deals with Y = H bar{X} using MCGDiff, and assume that H has a pseudo-inverse.
 
     Notes
     -----
-    alpha operates on the reverse time, and it cannot reach precisely 1. MCGDiff uses a square root on alpha, but
-    here we do not, to keep consistent with other methods.
+    This is an extension of the original MCGDiff that accepts an operator on bar{X}.
+
+    alpha here is different in the MCGDiff paper. Precisely, alpha here operates on the reverse time, and we use a
+    square to keep consistent with other methods, i.e., sqrt{original alpha} = this alpha.
     """
     nsteps = ts.shape[0] - 1
     dy = y.shape[0]
     r, rev_c = _make_common(rev_drift, rev_dispersion)
     h = (1 - kappa) / alpha(tau) ** 2
+    inv_y = obs_op_inv @ y
 
     def log_lk(u, t):
-        return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * y, (1 - h * alpha(t) ** 2) ** 0.5)
+        return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * inv_y, (1 - h * alpha(t) ** 2) ** 0.5)
 
-    def m(key, us_km1, tree_param):
-        t_km1, t_k = tree_param
+    def m_and_v(u, t_km1, t_k):
         alp = alpha(t_k)
-        gain = (1 - h * alp ** 2) / (1 - h * alp ** 2 + rev_c(t_km1, t_k))
-        mean_ = gain * alp * y + (1 - gain) * r(us_km1, t_km1, t_k)[:dy]
-        var_ = gain * rev_c(t_km1, t_k)
-        return mean_ + var_ ** 0.5 * jax.random.normal(key, us_km1.shape)
+        c = rev_c(t_km1, t_k)
+        trans = r(u, t_km1, t_k)
+
+        gain = (1 - h * alp ** 2) / (1 - h * alp ** 2 + c)
+        mean_bar = gain * alp * inv_y + (1 - gain) * trans[:dy]
+        var_bar = gain * c * jnp.ones(dy)
+        mean_ub = trans[dy:]
+        var_ub = c * jnp.ones(u.shape[0] - dy)
+        return jnp.concatenate([mean_bar, mean_ub], axis=0), jnp.concatenate([var_bar, var_ub], axis=0)
+
+    def m(key_, us_km1, tree_param):
+        t_km1, t_k = tree_param
+        ms, vs = jax.vmap(m_and_v, in_axes=[0, None, None])(us_km1, t_km1, t_k)
+        return ms + vs ** 0.5 * jax.random.normal(key_, us_km1.shape)
 
     @partial(jax.vmap, in_axes=[0, 0, None])
     def log_g(u_k, u_km1, tree_param):
         t_km1, t_k = tree_param
         alp = alpha(t_k)
-        normalising_const = jax.scipy.stats.norm.logpdf(alp * y,
+        normalising_const = jax.scipy.stats.norm.logpdf(alp * inv_y,
                                                         r(u_km1, t_km1, t_k)[:dy],
                                                         (1 - h * alp ** 2 + rev_c(t_km1, t_k)) ** 0.5)
         return normalising_const - log_lk(u_km1, t_km1)
