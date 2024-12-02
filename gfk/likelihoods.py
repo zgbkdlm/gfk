@@ -1,6 +1,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+from gfk.tools import nconcat
 from gfk.typings import Array, JArray, FloatScalar, NumericScalar, IntScalar
 from typing import Callable, Tuple
 
@@ -84,15 +85,17 @@ def pushfwd_normal_batch(obs_op: Array,
     Tuple[(nsteps + 1, ...), (nsteps + 1, ...)]
         The pushforward likelihood linear operators and covariances.
     """
-    Fs = np.zeros((nsteps + 1, *obs_op.shape))
-    omegas = np.zeros((nsteps + 1, *obs_cov.shape))
 
-    Fs[0] = obs_op
-    omegas[0] = obs_cov
-    for i in range(nsteps):
-        Fs[i + 1] = aux_trans_op(i) * Fs[i]
-        omegas[i + 1] = aux_trans_op(i) ** 2 * (Fs[i] @ Fs[i].T * rev_trans_var(i + 1) + omegas[i]) + aux_trans_var(i)
-    return Fs, omegas
+    def scan_body(carry, elem):
+        f, omega = carry
+        i = elem
+
+        f_ = aux_trans_op(i) * f
+        omega_ = aux_trans_op(i) ** 2 * (f @ f.T * rev_trans_var(i + 1) + omega) + aux_trans_var(i)
+        return (f_, omega_), (f_, omega_)
+
+    fs, omegas = jax.lax.scan(scan_body, (obs_op, obs_cov), jnp.arange(nsteps))[1]
+    return nconcat(obs_op, fs), nconcat(obs_cov, omegas)
 
 
 def true_pushfwd_normal(y, x, t, m, v, obs_op, obs_cov):

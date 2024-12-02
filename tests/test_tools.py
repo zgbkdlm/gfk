@@ -3,7 +3,7 @@ import jax.random
 import numpy as np
 import jax.numpy as jnp
 import numpy.testing as npt
-from gfk.tools import nconcat, sqrtm, kl, bures, logpdf_mvn
+from gfk.tools import nconcat, sqrtm, kl, bures, logpdf_mvn, logpdf_mvn_chol, chol_solve
 
 jax.config.update("jax_enable_x64", True)
 
@@ -42,5 +42,17 @@ def test_mvns():
                      [0.1, 2., 0.1],
                      [0.2, 0.1, 2.5]])
     eigvals, eigvecs = jnp.linalg.eigh(cov)
+    chol = jnp.linalg.cholesky(cov)
 
     npt.assert_allclose(logpdf_mvn(x, m, eigvals, eigvecs), jax.scipy.stats.multivariate_normal.logpdf(x, m, cov))
+    npt.assert_allclose(logpdf_mvn_chol(x, m, chol), jax.scipy.stats.multivariate_normal.logpdf(x, m, cov))
+
+
+def test_chol_solve():
+    cov = jnp.array([[1., 0.1, 0.2],
+                     [0.1, 2., 0.1],
+                     [0.2, 0.1, 2.5]])
+    chol = jnp.linalg.cholesky(cov)
+    x = jnp.ones(3)
+
+    npt.assert_allclose(chol_solve(chol, x), jnp.linalg.solve(cov, x))

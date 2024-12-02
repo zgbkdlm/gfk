@@ -5,7 +5,7 @@ import math
 import jax
 import jax.numpy as jnp
 from gfk.likelihoods import pushfwd_normal, pushfwd_normal_batch, bridge_log_likelihood
-from gfk.tools import nconcat, euler_maruyama
+from gfk.tools import nconcat, euler_maruyama, logpdf_mvn_chol, chol_solve
 from gfk.typings import JArray, JKey, PyTree, FloatScalar, NumericScalar, Array
 from functools import partial
 from typing import Callable, Tuple
@@ -176,41 +176,22 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
     def rev_trans_var(i):
         return rev_dispersion(ts[nsteps - i]) ** 2 * (ts[i] - ts[i - 1])
 
-    def logpdf_rev_transition(u_k, u_km1, t_k, t_km1):
-        return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, r(u_km1, t_km1, t_k), rev_c(t_km1, t_k) ** 0.5), axis=-1)
-
     def rev_likelihood(k):
         return pushfwd_normal(obs_op, obs_cov, aux_semigroup, aux_trans_var, rev_trans_var, nsteps - k)
-
-    @partial(jax.vmap, in_axes=[0, None])
-    def _markov_common(us, tree_param):
-        v_km1, v_k, t_km1, t_k, k, chol_g = tree_param
-        inc = r(us, t_km1, t_k)
-        rev_obs_op, _ = rev_likelihood(k)
-        rev_c_ = rev_c(t_km1, t_k)
-        mean_ = inc + rev_c_ * rev_obs_op.T @ jax.scipy.linalg.solve_triangular(chol_g, v_k - rev_obs_op @ inc,
-                                                                                lower=True)
-        cov_ = rev_c_ * jnp.eye(us.shape[0]) - rev_c_ * rev_obs_op.T @ jax.scipy.linalg.solve_triangular(chol_g,
-                                                                                                         rev_obs_op * rev_c_,
-                                                                                                         lower=True)
-        return mean_, cov_
 
     def _markov_common_mean(u, tree_param):
         v_km1, v_k, t_km1, t_k, k, chol_g = tree_param
         inc = r(u, t_km1, t_k)
         rev_obs_op, _ = rev_likelihood(k)
         rev_c_ = rev_c(t_km1, t_k)
-        mean_ = inc + rev_c_ * rev_obs_op.T @ jax.scipy.linalg.solve_triangular(chol_g, v_k - rev_obs_op @ inc,
-                                                                                lower=True)
+        mean_ = inc + rev_c_ * rev_obs_op.T @ chol_solve(chol_g, v_k - rev_obs_op @ inc)
         return mean_
 
     def _markov_common_cov(tree_param):
         _, _, t_km1, t_k, k, chol_g = tree_param
         rev_obs_op, _ = rev_likelihood(k)
         rev_c_ = rev_c(t_km1, t_k)
-        cov_ = rev_c_ * jnp.eye(rev_obs_op.shape[1]) - rev_c_ * rev_obs_op.T @ jax.scipy.linalg.solve_triangular(chol_g,
-                                                                                                                 rev_obs_op * rev_c_,
-                                                                                                                 lower=True)
+        cov_ = rev_c_ * jnp.eye(rev_obs_op.shape[1]) - rev_c_ * rev_obs_op.T @ chol_solve(chol_g, rev_obs_op * rev_c_, )
         return cov_
 
     def m(key, us, tree_param):
@@ -218,21 +199,20 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
                                in_axes=[0, None])(us, tree_param), _markov_common_cov(tree_param)
         return mean_ + jax.random.normal(key, us.shape) @ jnp.linalg.cholesky(cov_).T
 
-    def logpdf_m(u_k, u_km1, tree_param):
-        mean_, cov_ = _markov_common_mean(u_km1, tree_param), _markov_common_cov(tree_param)
-        return jax.scipy.stats.multivariate_normal.logpdf(u_k, mean_, cov_)
-
     def log_lk(v_k, u_k, k):
         rev_obs_op_, rev_obs_cov_ = rev_likelihood(k)
         return jax.scipy.stats.multivariate_normal.logpdf(v_k, rev_obs_op_ @ u_k, rev_obs_cov_)
 
     @partial(jax.vmap, in_axes=[0, 0, None])
     def log_g(u_k, u_km1, tree_param):
-        v_km1, v_k, t_km1, t_k, k, _ = tree_param
-        return (log_lk(v_k, u_k, k) + logpdf_rev_transition(u_k, u_km1, t_k, t_km1)
-                - log_lk(v_km1, u_km1, k - 1) - logpdf_m(u_k, u_km1, tree_param))
+        v_km1, v_k, t_km1, t_k, k, chol = tree_param
+        inc = r(u_km1, t_km1, t_k)
+        rev_obs_op, _ = rev_likelihood(k)
+        normalising_const = logpdf_mvn_chol(v_k, rev_obs_op @ inc, chol)
+        return normalising_const - log_lk(v_km1, u_km1, k - 1)
 
     obs_ops, obs_covs = pushfwd_normal_batch(obs_op, obs_cov, aux_trans_op, aux_trans_var, rev_trans_var, nsteps)
+    rev_obs_ops, rev_obs_covs = obs_ops[::-1], obs_covs[::-1]
     chols = jax.vmap(lambda rev_obs_op, rev_obs_cov, t_km1, t_k: jnp.linalg.cholesky(
         rev_obs_op @ rev_obs_op.T * rev_c(t_km1, t_k) + rev_obs_cov), in_axes=(0, 0, 0, 0))(obs_ops[-2::-1],
                                                                                             obs_covs[-2::-1], ts[:-1],
@@ -718,7 +698,7 @@ def _noiseless_mcgdiff(key, m0,
         normalising_const = jax.scipy.stats.norm.logpdf(alp * y,
                                                         r(u_km1, t_km1, t_k)[:dy],
                                                         (1 - h * alp ** 2 + rev_c(t_km1, t_k)) ** 0.5)
-        return normalising_const / log_lk(u_km1, t_km1)
+        return normalising_const - log_lk(u_km1, t_km1)
 
     @partial(jax.vmap, in_axes=[0])
     def log_g0(us):

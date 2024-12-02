@@ -1,7 +1,7 @@
 import jax
 import math
 import jax.numpy as jnp
-from gfk.typings import JArray, JKey, Array
+from gfk.typings import JArray, JKey, Array, JFloat
 from typing import Callable, Sequence
 
 
@@ -132,7 +132,7 @@ def sampling_gm(key: JKey, ws: Array, ms: Array, eigvals: Array, eigvecs: Array)
     key_cat, key_nor = jax.random.split(key)
 
     ind = jax.random.choice(key_cat, n, p=ws)
-    return ms[ind] + eigvecs[ind] @ (eigvals[ind] ** 0.5 * jax.random.normal(key_nor, (d, )))
+    return ms[ind] + eigvecs[ind] @ (eigvals[ind] ** 0.5 * jax.random.normal(key_nor, (d,)))
 
 
 def logpdf_mvn(x, m, eigvals, eigvecs):
@@ -144,6 +144,20 @@ def logpdf_mvn(x, m, eigvals, eigvecs):
     return -0.5 * (jnp.dot(c_, c_ / eigvals) + jnp.sum(jnp.log(eigvals)) + n * math.log(2 * math.pi))
 
 
+def logpdf_mvn_chol(x: JArray, m: JArray, chol: JArray) -> JFloat:
+    n = m.shape[0]
+    z = jax.lax.linalg.triangular_solve(chol, x - m, left_side=True, lower=True)
+    log_det = jnp.sum(jnp.log(jnp.diag(chol)))
+    return -0.5 * (jnp.dot(z, z) + n * math.log(2 * math.pi) + 2 * log_det)
+
+
 def logpdf_gm(x, ws, ms, covs):
     return jax.scipy.special.logsumexp(
         jax.vmap(jax.scipy.stats.multivariate_normal.logpdf, in_axes=[None, 0, 0])(x, ms, covs), b=ws)
+
+
+def chol_solve(chol, b, lower=True):
+    return jax.lax.linalg.triangular_solve(chol,
+                                           jax.lax.linalg.triangular_solve(chol, b, left_side=True, lower=lower,
+                                                                           transpose_a=not lower),
+                                           left_side=True, lower=lower, transpose_a=lower)
