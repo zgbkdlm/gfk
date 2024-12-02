@@ -10,7 +10,7 @@ def pushfwd_normal(obs_op: Array,
                    obs_cov: Array,
                    aux_semigroup: Callable[[IntScalar, IntScalar], FloatScalar],
                    aux_trans_var: Callable[[IntScalar], FloatScalar],
-                   rev_trans_var: Callable[[IntScalar], FloatScalar],
+                   trans_var: Callable[[IntScalar], FloatScalar],
                    j: IntScalar) -> Tuple[JArray, JArray]:
     """Pushforward a Gaussian likelihood with an auxiliary diffusion.
     This function implements for scalar diffusion coefficients.
@@ -25,8 +25,9 @@ def pushfwd_normal(obs_op: Array,
         The auxiliary diffusion's transition semigroup.
     aux_trans_var : Callable (Int) -> float
         The auxiliary diffusion's transition variance.
-    rev_trans_var : Callable (Int) -> float
-        The reversal diffusion's transition variance.
+    trans_var : Callable (Int) -> float
+        The reversal diffusion's transition variance. At the forward step k, it should give the transition variance
+        between k - 1 and k.
     j : int
         The step.
 
@@ -38,7 +39,7 @@ def pushfwd_normal(obs_op: Array,
     F = aux_semigroup(j, 0) * obs_op
 
     def body_c(i, val):
-        return val + rev_trans_var(i)
+        return val + trans_var(i)
 
     def body_d(i, val):
         return val + aux_semigroup(j, i + 1) ** 2 * aux_trans_var(i)
@@ -58,8 +59,9 @@ def pushfwd_normal_batch(obs_op: Array,
                          obs_cov: Array,
                          aux_trans_op: Callable[[IntScalar], FloatScalar],
                          aux_trans_var: Callable[[IntScalar], FloatScalar],
-                         rev_trans_var: Callable[[IntScalar], FloatScalar],
-                         nsteps: int) -> Tuple[Array, Array]:
+                         trans_var: Callable[[IntScalar], FloatScalar],
+                         nsteps: int,
+                         reverse: bool = False) -> Tuple[Array, Array]:
     """Pushforward a Gaussian likelihood with an auxiliary diffusion.
     This function implements for scalar diffusion coefficients.
 
@@ -75,10 +77,13 @@ def pushfwd_normal_batch(obs_op: Array,
         The auxiliary diffusion's transition.
     aux_trans_var : Callable (Int) -> float
         The auxiliary diffusion's transition variance.
-    rev_trans_var : Callable (Int) -> float
-        The reversal diffusion's transition variance.
+    trans_var : Callable (Int) -> float
+        The reversal diffusion's transition variance. At the forward step k, it should give the transition variance
+        between k - 1 and k. 1 <= k <= nsteps.
     nsteps : int
         The number of steps.
+    reverse : bool, default=False
+        Whether return the reversed pushforward likelihoods.
 
     Returns
     -------
@@ -91,11 +96,14 @@ def pushfwd_normal_batch(obs_op: Array,
         i = elem
 
         f_ = aux_trans_op(i) * f
-        omega_ = aux_trans_op(i) ** 2 * (f @ f.T * rev_trans_var(i + 1) + omega) + aux_trans_var(i)
+        omega_ = aux_trans_op(i) ** 2 * (f @ f.T * trans_var(i + 1) + omega) + aux_trans_var(i)
         return (f_, omega_), (f_, omega_)
 
     fs, omegas = jax.lax.scan(scan_body, (obs_op, obs_cov), jnp.arange(nsteps))[1]
-    return nconcat(obs_op, fs), nconcat(obs_cov, omegas)
+    if reverse:
+        return nconcat(obs_op, fs)[::-1], nconcat(obs_cov, omegas)[::-1]
+    else:
+        return nconcat(obs_op, fs), nconcat(obs_cov, omegas)
 
 
 def true_pushfwd_normal(y, x, t, m, v, obs_op, obs_cov):

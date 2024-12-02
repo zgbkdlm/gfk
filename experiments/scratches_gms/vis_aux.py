@@ -28,7 +28,7 @@ ts = jnp.linspace(0., T, nsteps + 1)
 
 # Define the data
 key, subkey = jax.random.split(key)
-dx, dy = 10, 1
+dx, dy = 100, 1
 ncomponents = 5
 ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents)
 eigvals, eigvecs = jnp.linalg.eigh(covs)

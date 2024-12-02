@@ -173,25 +173,21 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
 
     r, rev_c = _make_common(rev_drift, rev_dispersion)
 
-    def rev_trans_var(i):
-        return rev_dispersion(ts[nsteps - i]) ** 2 * (ts[i] - ts[i - 1])
-
-    def rev_likelihood(k):
-        return pushfwd_normal(obs_op, obs_cov, aux_semigroup, aux_trans_var, rev_trans_var, nsteps - k)
+    def trans_var(i):
+        return rev_dispersion(ts[::-1][i]) ** 2 * (ts[i] - ts[i - 1])
 
     def _markov_common_mean(u, tree_param):
         v_km1, v_k, t_km1, t_k, k, chol_g = tree_param
         inc = r(u, t_km1, t_k)
-        rev_obs_op, _ = rev_likelihood(k)
         rev_c_ = rev_c(t_km1, t_k)
-        mean_ = inc + rev_c_ * rev_obs_op.T @ chol_solve(chol_g, v_k - rev_obs_op @ inc)
+        mean_ = inc + rev_c_ * rev_obs_ops[k].T @ chol_solve(chol_g, v_k - rev_obs_ops[k] @ inc)
         return mean_
 
     def _markov_common_cov(tree_param):
         _, _, t_km1, t_k, k, chol_g = tree_param
-        rev_obs_op, _ = rev_likelihood(k)
+        rev_obs_op = rev_obs_ops[k]
         rev_c_ = rev_c(t_km1, t_k)
-        cov_ = rev_c_ * jnp.eye(rev_obs_op.shape[1]) - rev_c_ * rev_obs_op.T @ chol_solve(chol_g, rev_obs_op * rev_c_, )
+        cov_ = rev_c_ * jnp.eye(rev_obs_op.shape[1]) - rev_c_ * rev_obs_op.T @ chol_solve(chol_g, rev_obs_op * rev_c_)
         return cov_
 
     def m(key, us, tree_param):
@@ -200,23 +196,21 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
         return mean_ + jax.random.normal(key, us.shape) @ jnp.linalg.cholesky(cov_).T
 
     def log_lk(v_k, u_k, k):
-        rev_obs_op_, rev_obs_cov_ = rev_likelihood(k)
-        return jax.scipy.stats.multivariate_normal.logpdf(v_k, rev_obs_op_ @ u_k, rev_obs_cov_)
+        return jax.scipy.stats.multivariate_normal.logpdf(v_k, rev_obs_ops[k] @ u_k, rev_obs_covs[k])
 
     @partial(jax.vmap, in_axes=[0, 0, None])
     def log_g(u_k, u_km1, tree_param):
-        v_km1, v_k, t_km1, t_k, k, chol = tree_param
+        v_km1, v_k, t_km1, t_k, k, chol_g = tree_param
         inc = r(u_km1, t_km1, t_k)
-        rev_obs_op, _ = rev_likelihood(k)
-        normalising_const = logpdf_mvn_chol(v_k, rev_obs_op @ inc, chol)
+        normalising_const = logpdf_mvn_chol(v_k, rev_obs_ops[k] @ inc, chol_g)
         return normalising_const - log_lk(v_km1, u_km1, k - 1)
 
-    obs_ops, obs_covs = pushfwd_normal_batch(obs_op, obs_cov, aux_trans_op, aux_trans_var, rev_trans_var, nsteps)
-    rev_obs_ops, rev_obs_covs = obs_ops[::-1], obs_covs[::-1]
+    rev_obs_ops, rev_obs_covs = pushfwd_normal_batch(obs_op, obs_cov, aux_trans_op, aux_trans_var, trans_var,
+                                                     nsteps, reverse=True)
     chols = jax.vmap(lambda rev_obs_op, rev_obs_cov, t_km1, t_k: jnp.linalg.cholesky(
-        rev_obs_op @ rev_obs_op.T * rev_c(t_km1, t_k) + rev_obs_cov), in_axes=(0, 0, 0, 0))(obs_ops[-2::-1],
-                                                                                            obs_covs[-2::-1], ts[:-1],
-                                                                                            ts[1:])
+        rev_obs_op @ rev_obs_op.T * rev_c(t_km1, t_k) + rev_obs_cov), in_axes=(0, 0, 0, 0))(rev_obs_ops[1:],
+                                                                                            rev_obs_covs[1:],
+                                                                                            ts[:-1], ts[1:])
 
     def guided_smc(key, m0, vs, nparticles, resampling, resampling_threshold, return_path):
 
@@ -580,12 +574,12 @@ def make_fk_wu(ll_target,
         raise ValueError('Invalid mode.')
 
 
-def make_mcgdiff(obs_op, obs_vars,
+def make_mcgdiff(obs_op, obs_cov,
                  rev_drift, rev_dispersion,
                  alpha,
                  y, ts, kappa,
                  mode: str = 'guided'):
-    """This deals with Y = H X + eps,  eps ~ N(0, v), where v is any diagonal.
+    """This deals with Y = H X + eps,  eps ~ N(0, v), where v = L L^T.
     This converts to U^T / sqrt(v) Y = S bar{V}^T / sqrt(v) X + N(0, I) = S / sqrt(v) bar{V^T X} + N(0, I)
     Convert to the inpainting basis with unitary variance
     I.e., U^T / sqrt(v) Y = c bar{X} + N(0, I)
