@@ -26,7 +26,8 @@ def generate_gm(key, dx, dy, ncomponents, diag_obs_cov: bool = False):
     s = jax.random.normal(subkey, (dy, ))
     obs_op = u @ jnp.diag(s) @ vh
     obs_cov_rnds = jax.random.normal(key_covs, shape=(dy, ))
-    obs_cov = (jnp.outer(obs_cov_rnds, obs_cov_rnds) + jnp.eye(dy)) * 1.
+    # obs_cov = (jnp.outer(obs_cov_rnds, obs_cov_rnds) + jnp.eye(dy)) * 1.
+    obs_cov = jnp.eye(dy)
     return ws, ms, covs, obs_op, jnp.diag(jnp.diag(obs_cov)) if diag_obs_cov else obs_cov
 
 

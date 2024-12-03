@@ -580,9 +580,10 @@ def make_mcgdiff(obs_op, obs_cov,
                  y, ts, kappa,
                  mode: str = 'guided'):
     """This deals with Y = H X + eps,  eps ~ N(0, v), where v = L L^T.
-    This converts to a problem on an inpainting basis. Specifically, let H = U S bar{V}^T, then
-        L^-1 Y = L^-1 U S bar{V}^T X + N(0, I)
-               = L^-1 U S bar{Z} + N(0, I),   Z = V^T X
+    This converts to a problem on an inpainting basis. Specifically,
+        L^-1 Y = L^-1 H X + N(0, I)
+               = U S bar{V}^T X + N(0, I),
+               = U S bar{Z} + N(0, I),   Z = V^T X
 
     Notes
     -----
@@ -590,14 +591,15 @@ def make_mcgdiff(obs_op, obs_cov,
     """
     nsteps = ts.shape[0] - 1
     dy, dx = obs_op.shape
-    U, S, VT = jnp.linalg.svd(obs_op, full_matrices=True)
     chol = jnp.linalg.cholesky(obs_cov)
-    inpaint_y = jax.lax.linalg.triangular_solve(chol, y, lower=True, left_side=True)
-    inpaint_obs_op = jax.lax.linalg.triangular_solve(chol, U @ jnp.diag(S), lower=True, left_side=True)
-    inpaint_obs_op_inv = jnp.diag(1 / S) @ U.T @ chol
+    U, S, VT = jnp.linalg.svd(jax.lax.linalg.triangular_solve(chol, obs_op, lower=True, left_side=True),
+                              full_matrices=True)
+    scaled_y = jax.lax.linalg.triangular_solve(chol, y, lower=True, left_side=True)
+    inpaint_obs_op = U @ jnp.diag(S)
+    inpaint_obs_op_inv = jnp.diag(1 / S) @ U.T
 
-    # Compute tau
-    res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)  # TODO: Check if this is reversed
+    # Compute tau with fixed N(0, I)
+    res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)
     tau_ind = jnp.argmin(res)
     tau = ts[tau_ind]
     ts_smc, ts_is = ts[:tau_ind + 1], ts[tau_ind + 1:]
@@ -606,17 +608,17 @@ def make_mcgdiff(obs_op, obs_cov,
     def _err():
         raise ValueError('Invalid tau.')
 
-    jax.lax.cond(tau_ind > nsteps - 2,
-                 lambda _: jax.debug.callback(_err),
-                 lambda _: None,
-                 None)
+    _ = jax.lax.cond(tau_ind > nsteps - 2,
+                     lambda _: jax.debug.callback(_err),
+                     lambda _: None,
+                     None)
 
     # Run for noiseless MCGDiff + one-step importance sampling
     def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
         key_smc, key_is = jax.random.split(key)
         samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
                                                     rev_drift, rev_dispersion, alpha, ts_smc,
-                                                    inpaint_y, inpaint_obs_op_inv, kappa, tau,
+                                                    scaled_y * alpha(tau), inpaint_obs_op_inv, h,
                                                     nparticles, resampling, resampling_threshold, return_path, mode)
 
         if return_path:
@@ -628,7 +630,7 @@ def make_mcgdiff(obs_op, obs_cov,
         ess_tau = compute_ess(log_ws_tau)
 
         # Do a one-step importance sampling
-        keys = jax.random.split(key_smc, num=nparticles)
+        keys = jax.random.split(key_is, num=nparticles)
         _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, rev_drift, rev_dispersion,
                                               integration_nsteps=1, return_path=return_path)
         uss = jax.vmap(_em, in_axes=[0, 0], out_axes=1)(keys, us_tau)
@@ -636,9 +638,12 @@ def make_mcgdiff(obs_op, obs_cov,
 
         @partial(jax.vmap, in_axes=[0, None])
         def log_lk(u, t):
-            return jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy],
-                                                       alpha(t) * inpaint_obs_op_inv @ inpaint_y,
-                                                       (1 - h * alpha(t) ** 2) ** 0.5))
+            return jax.lax.cond(t == ts[-1],
+                                lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(scaled_y, inpaint_obs_op @ u[:dy], 1.)),
+                                lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy],
+                                                                              alpha(t) * inpaint_obs_op_inv @ scaled_y * alpha(tau),
+                                                                              (1 - h * alpha(t) ** 2) ** 0.5)),
+                                None)
 
         log_wsT = log_ws_tau + log_lk(usT, ts[-1]) - log_lk(us_tau, tau)
         log_wsT = log_wsT - jax.scipy.special.logsumexp(log_wsT)
@@ -664,7 +669,7 @@ def make_mcgdiff(obs_op, obs_cov,
 def _noiseless_mcgdiff(key, m0,
                        rev_drift, rev_dispersion, alpha: Callable,
                        ts,
-                       y: JArray, obs_op_inv, kappa, tau,
+                       y: JArray, obs_op_inv, h,
                        nparticles, resampling, resampling_threshold, return_path,
                        mode: str = 'guided') -> Tuple[JArray, JArray, JArray]:
     """This deals with Y = H bar{X} using MCGDiff, and assume that H has a pseudo-inverse.
@@ -679,7 +684,6 @@ def _noiseless_mcgdiff(key, m0,
     nsteps = ts.shape[0] - 1
     dy = y.shape[0]
     r, rev_c = _make_common(rev_drift, rev_dispersion)
-    h = (1 - kappa) / alpha(tau) ** 2
     inv_y = obs_op_inv @ y
 
     def log_lk(u, t):
@@ -691,7 +695,7 @@ def _noiseless_mcgdiff(key, m0,
         trans = r(u, t_km1, t_k)
 
         gain = (1 - h * alp ** 2) / (1 - h * alp ** 2 + c)
-        mean_bar = gain * alp * inv_y + (1 - gain) * trans[:dy]
+        mean_bar = (1 - gain) * alp * inv_y + gain * trans[:dy]
         var_bar = gain * c * jnp.ones(dy)
         mean_ub = trans[dy:]
         var_ub = c * jnp.ones(u.shape[0] - dy)

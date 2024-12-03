@@ -10,7 +10,7 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(99)
+key = jax.random.PRNGKey(7)
 
 # Define the forward process
 a, b = -1., 1.
@@ -31,7 +31,7 @@ wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, ei
 
 # Define the observation operator and the observation covariance
 y_likely = jnp.einsum('ij,kj,k->i', obs_op, ms, ws)
-y = y_likely + 0
+y = y_likely + 10
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
@@ -48,7 +48,7 @@ def alpha(t):
 
 # Do conditional sampling
 nparticles = 1024
-kappa = 1e-4
+kappa = 1e-2
 
 # The sampler
 smc_sampler = make_mcgdiff(obs_op, obs_cov, rev_drift, rev_dispersion, alpha, y, ts, kappa, mode='guided')
