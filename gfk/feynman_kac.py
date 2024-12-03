@@ -600,7 +600,7 @@ def make_mcgdiff(obs_op, obs_cov,
     res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)  # TODO: Check if this is reversed
     tau_ind = jnp.argmin(res)
     tau = ts[tau_ind]
-    ts_smc, ts_is = ts[:tau_ind], ts[tau_ind:]
+    ts_smc, ts_is = ts[:tau_ind + 1], ts[tau_ind + 1:]
     h = (1 - kappa) / alpha(tau) ** 2
 
     def _err():
@@ -614,36 +614,49 @@ def make_mcgdiff(obs_op, obs_cov,
     # Run for noiseless MCGDiff + one-step importance sampling
     def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
         key_smc, key_is = jax.random.split(key)
-        samples, log_ws, esss = _noiseless_mcgdiff(key_smc, m0,
-                                                   rev_drift, rev_dispersion, alpha, ts_smc,
-                                                   inpaint_y, inpaint_obs_op_inv, kappa, tau,
-                                                   nparticles, resampling, resampling_threshold, return_path, mode)
+        samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
+                                                    rev_drift, rev_dispersion, alpha, ts_smc,
+                                                    inpaint_y, inpaint_obs_op_inv, kappa, tau,
+                                                    nparticles, resampling, resampling_threshold, return_path, mode)
 
         if return_path:
             us_tau = samples[-1]
-            log_ws_tau = log_ws[-1]
+            log_ws_tau = log_wss[-1]
         else:
             us_tau = samples
-            log_ws_tau = log_ws
+            log_ws_tau = log_wss
+        ess_tau = compute_ess(log_ws_tau)
 
         # Do a one-step importance sampling
         keys = jax.random.split(key_smc, num=nparticles)
         _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, rev_drift, rev_dispersion,
                                               integration_nsteps=1, return_path=return_path)
-        usT = jax.vmap(_em, in_axes=[0, 0])(keys, us_tau)
+        uss = jax.vmap(_em, in_axes=[0, 0], out_axes=1)(keys, us_tau)
+        usT = uss[-1] if return_path else uss
 
         @partial(jax.vmap, in_axes=[0, None])
         def log_lk(u, t):
-            return jax.scipy.stats.norm.logpdf(u[:dy],
-                                               alpha(t) * inpaint_obs_op_inv @ inpaint_y,
-                                               (1 - h * alpha(t) ** 2) ** 0.5)
+            return jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy],
+                                                       alpha(t) * inpaint_obs_op_inv @ inpaint_y,
+                                                       (1 - h * alpha(t) ** 2) ** 0.5))
 
         log_wsT = log_ws_tau + log_lk(usT, ts[-1]) - log_lk(us_tau, tau)
         log_wsT = log_wsT - jax.scipy.special.logsumexp(log_wsT)
-        essT = compute_ess(log_ws)
+        essT = compute_ess(log_wsT)
 
-        return (tau, jnp.einsum('ji,...j->...i', VT, samples), jnp.einsum('ji,...j->...i', VT, usT),
-                log_ws, log_wsT, esss, essT)
+        if return_path:
+            samples = jnp.concatenate([samples, uss], axis=0)
+            log_wss = jnp.concatenate([log_wss,
+                                       log_ws_tau * jnp.ones((nsteps - 1 - tau_ind, nparticles)),
+                                       log_wsT * jnp.ones((1, nparticles))],
+                                      axis=0)
+        else:
+            samples = usT
+            log_wss = log_wsT
+
+        esss = jnp.concatenate([esss, ess_tau * jnp.ones(nsteps - 1 - tau_ind), essT * jnp.ones(1)])
+
+        return ts_smc, ts_is, jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
 
     return smc_sampler
 
@@ -670,7 +683,7 @@ def _noiseless_mcgdiff(key, m0,
     inv_y = obs_op_inv @ y
 
     def log_lk(u, t):
-        return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * inv_y, (1 - h * alpha(t) ** 2) ** 0.5)
+        return jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * inv_y, (1 - h * alpha(t) ** 2) ** 0.5))
 
     def m_and_v(u, t_km1, t_k):
         alp = alpha(t_k)
@@ -693,9 +706,9 @@ def _noiseless_mcgdiff(key, m0,
     def log_g(u_k, u_km1, tree_param):
         t_km1, t_k = tree_param
         alp = alpha(t_k)
-        normalising_const = jax.scipy.stats.norm.logpdf(alp * inv_y,
-                                                        r(u_km1, t_km1, t_k)[:dy],
-                                                        (1 - h * alp ** 2 + rev_c(t_km1, t_k)) ** 0.5)
+        normalising_const = jnp.sum(jax.scipy.stats.norm.logpdf(alp * inv_y,
+                                                                r(u_km1, t_km1, t_k)[:dy],
+                                                                (1 - h * alp ** 2 + rev_c(t_km1, t_k)) ** 0.5))
         return normalising_const - log_lk(u_km1, t_km1)
 
     @partial(jax.vmap, in_axes=[0])
