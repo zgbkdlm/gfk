@@ -580,9 +580,9 @@ def make_mcgdiff(obs_op, obs_cov,
                  y, ts, kappa,
                  mode: str = 'guided'):
     """This deals with Y = H X + eps,  eps ~ N(0, v), where v = L L^T.
-    This converts to U^T / sqrt(v) Y = S bar{V}^T / sqrt(v) X + N(0, I) = S / sqrt(v) bar{V^T X} + N(0, I)
-    Convert to the inpainting basis with unitary variance
-    I.e., U^T / sqrt(v) Y = c bar{X} + N(0, I)
+    This converts to a problem on an inpainting basis. Specifically, let H = U S bar{V}^T, then
+        L^-1 Y = L^-1 U S bar{V}^T X + N(0, I)
+               = L^-1 U S bar{Z} + N(0, I),   Z = V^T X
 
     Notes
     -----
@@ -590,16 +590,14 @@ def make_mcgdiff(obs_op, obs_cov,
     """
     nsteps = ts.shape[0] - 1
     dy, dx = obs_op.shape
-    if dy > dx:
-        raise NotImplementedError('Not implemented for tall observation operators.')
-    if obs_vars.ndim > 1:
-        raise NotImplementedError('The observation covariance should be a diagonal (in 1D array format).')
     U, S, VT = jnp.linalg.svd(obs_op, full_matrices=True)
-    c = S / obs_vars ** 0.5
-    scaled_y = U.T @ y / obs_vars ** 0.5 / c
+    chol = jnp.linalg.cholesky(obs_cov)
+    inpaint_y = jax.lax.linalg.triangular_solve(chol, y, lower=True, left_side=True)
+    inpaint_obs_op = jax.lax.linalg.triangular_solve(chol, U @ jnp.diag(S), lower=True, left_side=True)
+    inpaint_obs_op_inv = jnp.diag(1 / S) @ U.T @ chol
 
     # Compute tau
-    res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)
+    res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)  # TODO: Check if this is reversed
     tau_ind = jnp.argmin(res)
     tau = ts[tau_ind]
     ts_smc, ts_is = ts[:tau_ind], ts[tau_ind:]
@@ -618,7 +616,7 @@ def make_mcgdiff(obs_op, obs_cov,
         key_smc, key_is = jax.random.split(key)
         samples, log_ws, esss = _noiseless_mcgdiff(key_smc, m0,
                                                    rev_drift, rev_dispersion, alpha, ts_smc,
-                                                   scaled_y, kappa, tau,
+                                                   inpaint_y, inpaint_obs_op_inv, kappa, tau,
                                                    nparticles, resampling, resampling_threshold, return_path, mode)
 
         if return_path:
@@ -632,26 +630,20 @@ def make_mcgdiff(obs_op, obs_cov,
         keys = jax.random.split(key_smc, num=nparticles)
         _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, rev_drift, rev_dispersion,
                                               integration_nsteps=1, return_path=return_path)
-        uss = jax.vmap(_em, in_axes=[0, 0])(keys, us_tau)
-        usT = uss[-1] if return_path else uss
+        usT = jax.vmap(_em, in_axes=[0, 0])(keys, us_tau)
 
         @partial(jax.vmap, in_axes=[0, None])
         def log_lk(u, t):
-            return jax.scipy.stats.norm.logpdf(u[:dy], alpha(t) * scaled_y, (1 - h * alpha(t) ** 2) ** 0.5)
+            return jax.scipy.stats.norm.logpdf(u[:dy],
+                                               alpha(t) * inpaint_obs_op_inv @ inpaint_y,
+                                               (1 - h * alpha(t) ** 2) ** 0.5)
 
         log_wsT = log_ws_tau + log_lk(usT, ts[-1]) - log_lk(us_tau, tau)
         log_wsT = log_wsT - jax.scipy.special.logsumexp(log_wsT)
         essT = compute_ess(log_ws)
 
-        if return_path:
-            samples = jnp.concatenate([samples, uss], axis=0)
-            log_wss = jnp.concatenate([log_ws, jnp.ones(nsteps - tau - 1) * log_ws_tau, log_wsT[None]])
-        else:
-            samples = usT
-            log_wss = log_wsT
-        esss = jnp.concatenate([esss, jnp.ones(nsteps - tau - 1) * esss[-1], essT[None]])
-
-        return jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
+        return (tau, jnp.einsum('ji,...j->...i', VT, samples), jnp.einsum('ji,...j->...i', VT, usT),
+                log_ws, log_wsT, esss, essT)
 
     return smc_sampler
 
@@ -669,7 +661,7 @@ def _noiseless_mcgdiff(key, m0,
     This is an extension of the original MCGDiff that accepts an operator on bar{X}.
 
     alpha here is different in the MCGDiff paper. Precisely, alpha here operates on the reverse time, and we use a
-    square to keep consistent with other methods, i.e., sqrt{original alpha} = this alpha.
+    square to keep consistent with other methods, i.e., sqrt{original alpha} = this alpha reversed.
     """
     nsteps = ts.shape[0] - 1
     dy = y.shape[0]
