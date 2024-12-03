@@ -584,6 +584,7 @@ def make_mcgdiff(obs_op, obs_cov,
         L^-1 Y = L^-1 H X + N(0, I)
                = U S bar{V}^T X + N(0, I),
                = U S bar{Z} + N(0, I),   Z = V^T X
+        U^T L^-1 Y = S bar{Z} + N(0, I),
 
     Notes
     -----
@@ -614,7 +615,7 @@ def make_mcgdiff(obs_op, obs_cov,
                      None)
 
     # Run for noiseless MCGDiff + one-step importance sampling
-    def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
+    def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path, full_final: bool = False):
         key_smc, key_is = jax.random.split(key)
         samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
                                                     rev_drift, rev_dispersion, alpha, ts_smc,
@@ -629,37 +630,46 @@ def make_mcgdiff(obs_op, obs_cov,
             log_ws_tau = log_wss
         ess_tau = compute_ess(log_ws_tau)
 
-        # Do a one-step importance sampling
         keys = jax.random.split(key_is, num=nparticles)
         _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, rev_drift, rev_dispersion,
                                               integration_nsteps=1, return_path=return_path)
         uss = jax.vmap(_em, in_axes=[0, 0], out_axes=1)(keys, us_tau)
         usT = uss[-1] if return_path else uss
 
-        @partial(jax.vmap, in_axes=[0, None])
-        def log_lk(u, t):
-            return jax.lax.cond(t == ts[-1],
-                                lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(scaled_y, inpaint_obs_op @ u[:dy], 1.)),
-                                lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy],
-                                                                              alpha(t) * inpaint_obs_op_inv @ scaled_y * alpha(tau),
-                                                                              (1 - h * alpha(t) ** 2) ** 0.5)),
-                                None)
-
-        log_wsT = log_ws_tau + log_lk(usT, ts[-1]) - log_lk(us_tau, tau)
-        log_wsT = log_wsT - jax.scipy.special.logsumexp(log_wsT)
-        essT = compute_ess(log_wsT)
-
-        if return_path:
-            samples = jnp.concatenate([samples, uss], axis=0)
-            log_wss = jnp.concatenate([log_wss,
-                                       log_ws_tau * jnp.ones((nsteps - 1 - tau_ind, nparticles)),
-                                       log_wsT * jnp.ones((1, nparticles))],
-                                      axis=0)
+        # The final step
+        if not full_final:
+            if return_path:
+                samples = jnp.concatenate([samples, uss], axis=0)
+                log_wss = jnp.concatenate([log_wss, log_ws_tau * jnp.ones((nsteps - tau_ind, nparticles))], axis=0)
+            else:
+                samples = usT
+                log_wss = log_ws_tau
+            esss = jnp.concatenate([esss, ess_tau * jnp.ones(nsteps - tau_ind)])
         else:
-            samples = usT
-            log_wss = log_wsT
+            @partial(jax.vmap, in_axes=[0, None])
+            def log_lk(u, t):
+                return jax.lax.cond(t == ts[-1],
+                                    lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(scaled_y, inpaint_obs_op @ u[:dy], 1.)),
+                                    lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy],
+                                                                                  alpha(t) * inpaint_obs_op_inv @ scaled_y,
+                                                                                  (1 - h * alpha(t) ** 2) ** 0.5)),
+                                    None)
 
-        esss = jnp.concatenate([esss, ess_tau * jnp.ones(nsteps - 1 - tau_ind), essT * jnp.ones(1)])
+            log_wsT = log_ws_tau + log_lk(usT, ts[-1]) - log_lk(us_tau, tau)
+            log_wsT = log_wsT - jax.scipy.special.logsumexp(log_wsT)
+            essT = compute_ess(log_wsT)
+
+            if return_path:
+                samples = jnp.concatenate([samples, uss], axis=0)
+                log_wss = jnp.concatenate([log_wss,
+                                           log_ws_tau * jnp.ones((nsteps - 1 - tau_ind, nparticles)),
+                                           log_wsT * jnp.ones((1, nparticles))],
+                                          axis=0)
+            else:
+                samples = usT
+                log_wss = log_wsT
+
+            esss = jnp.concatenate([esss, ess_tau * jnp.ones(nsteps - 1 - tau_ind), essT * jnp.ones(1)])
 
         return ts_smc, ts_is, jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
 

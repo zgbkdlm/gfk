@@ -10,7 +10,7 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(7)
+key = jax.random.PRNGKey(666)
 
 # Define the forward process
 a, b = -1., 1.
@@ -31,7 +31,7 @@ wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, ei
 
 # Define the observation operator and the observation covariance
 y_likely = jnp.einsum('ij,kj,k->i', obs_op, ms, ws)
-y = y_likely + 10
+y = y_likely + 0
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
@@ -48,16 +48,17 @@ def alpha(t):
 
 # Do conditional sampling
 nparticles = 1024
-kappa = 1e-2
+kappa = 1e-1
 
 # The sampler
 smc_sampler = make_mcgdiff(obs_op, obs_cov, rev_drift, rev_dispersion, alpha, y, ts, kappa, mode='guided')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True)
+ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True, full_final=False)
 
 plt.plot(ts, esss)
+plt.vlines(ts_smc[-1], esss.min(), esss.max(), colors='black', linestyles='--')
 plt.show()
 
 key, subkey = jax.random.split(key)
