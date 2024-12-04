@@ -595,9 +595,9 @@ def make_mcgdiff(obs_op, obs_cov,
     chol = jnp.linalg.cholesky(obs_cov)
     U, S, VT = jnp.linalg.svd(jax.lax.linalg.triangular_solve(chol, obs_op, lower=True, left_side=True),
                               full_matrices=True)
-    scaled_y = jax.lax.linalg.triangular_solve(chol, y, lower=True, left_side=True)
-    inpaint_obs_op = U @ jnp.diag(S)
-    inpaint_obs_op_inv = jnp.diag(1 / S) @ U.T
+    scaled_y = U.T @ jax.lax.linalg.triangular_solve(chol, y, lower=True, left_side=True)
+    inpaint_obs_op = jnp.diag(S)
+    inpaint_obs_op_inv = jnp.diag(1 / S)
 
     # Compute tau with fixed N(0, I)
     res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)
@@ -623,7 +623,8 @@ def make_mcgdiff(obs_op, obs_cov,
         key_smc, key_is = jax.random.split(key)
         samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
                                                     inpainting_rev_drift, rev_dispersion, alpha, ts_smc,
-                                                    scaled_y, inpaint_obs_op_inv, h,
+                                                    scaled_y,
+                                                    inpaint_obs_op_inv, h,
                                                     nparticles, resampling, resampling_threshold, return_path, mode)
 
         if return_path:

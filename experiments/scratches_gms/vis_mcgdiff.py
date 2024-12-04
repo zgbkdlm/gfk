@@ -10,7 +10,7 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(321)
+key = jax.random.PRNGKey(999)
 
 # Define the forward process
 a, b = -1., 1.
@@ -48,14 +48,14 @@ def alpha(t):
 
 # Do conditional sampling
 nparticles = 1024
-kappa = 1e-4
+kappa = 1e-3
 
 # The sampler
 smc_sampler = make_mcgdiff(obs_op, obs_cov, rev_drift, rev_dispersion, alpha, y, ts, kappa, mode='guided')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True, full_final=True)
+ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True, full_final=False)
 
 plt.plot(ts, esss)
 plt.vlines(ts_smc[-1], esss.min(), esss.max(), colors='black', linestyles='--')
@@ -67,6 +67,9 @@ post_samples = jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys, 
                                                                           posterior_eigvals, posterior_eigvecs)
 
 print(sliced_wasserstein(uss[-1], post_samples, a=jnp.exp(log_wss[-1]))[0])
+
+plt.scatter(post_samples[:, 0], post_samples[:, 1], color='tab:red', alpha=0.5, s=1)
+plt.show()
 
 nbins = 50
 fig = plt.figure()

@@ -10,11 +10,10 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(321)
+key = jax.random.PRNGKey(999)
 
 # Define the forward process
 a, b = -1., 1.
-
 
 # Times
 t0, T = 0., 5
@@ -82,6 +81,9 @@ post_samples = jax.vmap(sampling_gm, in_axes=[0, None, None, None, None])(keys, 
                                                                           posterior_eigvals, posterior_eigvecs)
 
 print(sliced_wasserstein(uss[-1], post_samples, a=jnp.exp(log_wss[-1]))[0])
+
+plt.scatter(post_samples[:, 0], post_samples[:, 1], color='tab:red', alpha=0.5, s=1)
+plt.show()
 
 nbins = 50
 fig = plt.figure()

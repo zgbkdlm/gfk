@@ -10,15 +10,10 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(7)
+key = jax.random.PRNGKey(999)
 
 # Define the forward process
 a, b = -1., 1.
-
-
-def fwd_drift(x, t):
-    return a * x
-
 
 # Times
 t0, T = 0., 5
@@ -30,13 +25,13 @@ ts = jnp.linspace(0., T, nsteps + 1)
 key, subkey = jax.random.split(key)
 dx, dy = 10, 1
 ncomponents = 5
-ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents)
+ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents, full_obs_cov=True)
 eigvals, eigvecs = jnp.linalg.eigh(covs)
 wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
 # Define the observation operator and the observation covariance
 y_likely = jnp.einsum('ij,kj,k->i', obs_op, ms, ws)
-y = y_likely + 10
+y = y_likely + 0
 posterior_ws, posterior_ms, posterior_covs = gm_lin_posterior(y, obs_op, obs_cov, ws, ms, covs)
 posterior_eigvals, posterior_eigvecs = jnp.linalg.eigh(posterior_covs)
 
