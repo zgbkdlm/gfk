@@ -3,83 +3,65 @@ This contains the common experiment settings.
 """
 import jax
 import jax.numpy as jnp
-# import torch
-# from functools import partial
+import itertools
+import math
 
 
-
-def generate_gm(key, dx, dy, ncomponents, diag_obs_cov: bool = False):
+def generate_gm(key, dx, dy, ncomponents, full_obs_cov: bool = False):
     """Generate a GM (with observation) model.
+    This is similar to the one used in the MCGDiff paper but is more challenging.
+    But this has more randomness in the setting; may require more MC runs for convincing results.
     """
-    key_ws, key_ms, key_covs, key_obs_op, key_obs_cov = jax.random.split(key, num=5)
-    ws = jax.random.beta(key_ws, a=3., b=3., shape=(ncomponents,))
+    key, subkey = jax.random.split(key)
+    ws = jax.random.normal(subkey, shape=(ncomponents,)) ** 2
     ws = ws / jnp.sum(ws)
 
-    ms = jax.random.uniform(key_ms, minval=5., maxval=15., shape=(ncomponents, dx))
+    key, subkey = jax.random.split(key)
+    ms = jax.random.uniform(subkey, minval=-8, maxval=8., shape=(ncomponents, dx))
 
-    cov_rnds = jax.random.normal(key_covs, shape=(ncomponents, dx))
+    key, subkey = jax.random.split(key)
+    cov_rnds = jax.random.uniform(subkey, shape=(ncomponents, dx))
     covs = (jnp.einsum('...i,...j->...ij', cov_rnds, cov_rnds) + jnp.eye(dx)[None, :, :])
 
-    obs_op = jax.random.normal(key_obs_op, shape=(dy, dx))
+    key, subkey = jax.random.split(key)
+    obs_op = jax.random.normal(subkey, shape=(dy, dx))
     u, s, vh = jnp.linalg.svd(obs_op, full_matrices=False)
-    _, subkey = jax.random.split(key_obs_op)
-    s = jax.random.normal(subkey, (dy, ))
+
+    key, subkey = jax.random.split(key)
+    s = jnp.sort(jax.random.uniform(subkey, (dy,)), descending=True) + 1e-3
     obs_op = u @ jnp.diag(s) @ vh
-    obs_cov_rnds = jax.random.normal(key_covs, shape=(dy, ))
-    # obs_cov = (jnp.outer(obs_cov_rnds, obs_cov_rnds) + jnp.eye(dy)) * 1.
-    obs_cov = jnp.eye(dy)
-    return ws, ms, covs, obs_op, jnp.diag(jnp.diag(obs_cov)) if diag_obs_cov else obs_cov
+
+    key, subkey = jax.random.split(key)
+    if full_obs_cov:
+        obs_cov_rnds = jax.random.uniform(subkey, shape=(dy,))
+        obs_cov = jnp.outer(obs_cov_rnds, obs_cov_rnds) + jnp.eye(dy) * max(s) ** 2
+    else:
+        obs_cov = jnp.eye(dy) * jax.random.uniform(subkey) * jnp.max(s) ** 2
+    return ws, ms, covs, obs_op, obs_cov
 
 
-# def filip(seed, dim_x, dim_y):
-#     def ou_mixt(alpha_t, means, dim, weights):
-#         cat = torch.distributions.Categorical(weights, validate_args=False)
+# def generate_gm_mcgdiff(key, dx, dy, ncomponents=25):
+#     """Generate a GM (with observation) model.
+#     """
+#     if dx % 2 != 0:
+#         raise ValueError("dx must be even.")
 #
-#         ou_norm = torch.distributions.MultivariateNormal(
-#             torch.vstack(tuple((alpha_t ** .5) * m for m in means)),
-#             torch.eye(dim, device=means[0].device).repeat(len(means), 1, 1), validate_args=False)
-#         return torch.distributions.MixtureSameFamily(cat, ou_norm, validate_args=False)
+#     key, subkey = jax.random.split(key)
+#     ws = jax.random.normal(subkey, shape=(ncomponents,)) ** 2
+#     ws = ws / jnp.sum(ws)
 #
-#     def build_extended_svd(A: torch.tensor):
-#         U, d, V = torch.linalg.svd(A, full_matrices=True)
-#         coordinate_mask = torch.ones_like(V[0])
-#         coordinate_mask[len(d):] = 0
-#         return U, d, coordinate_mask, V
+#     a = (-2, -1, 0, 1, 2)
+#     ms_ = [jnp.tile(jnp.array([8. * i, 8. * j]), (1, dx // 2)) for (i, j) in itertools.product(a, a)]
+#     ms = jnp.concatenate(ms_, axis=0)
+#     covs = jnp.tile(jnp.eye(dx), (ncomponents, 1, 1))
 #
-#     def generate_measurement_equations(dim, dim_y, mixt, device):
-#         A = torch.randn((dim_y, dim), device=device)
+#     key, subkey = jax.random.split(key)
+#     obs_op = jax.random.normal(subkey, shape=(dy, dx))
+#     u, s, vh = jnp.linalg.svd(obs_op, full_matrices=False)
+#     key, subkey = jax.random.split(key)
+#     s = jnp.sort(jax.random.uniform(subkey, (dy,)), descending=True) + 1
+#     obs_op = u @ jnp.diag(s) @ vh
 #
-#         u, diag, coordinate_mask, v = build_extended_svd(A)
-#         diag = torch.sort(torch.rand_like(diag), descending=True).values
-#
-#         A = u @ (torch.diag(diag) @ v[coordinate_mask == 1, :])
-#         init_sample = mixt.sample()
-#         std = (torch.rand((1,)))[0] * max(diag)
-#         var_observations = std ** 2
-#
-#         init_obs = A @ init_sample
-#         init_obs += torch.randn_like(init_obs) * std
-#         return A.to(device), var_observations.to(device), init_obs.to(device)
-#
-#     def setup_of_gmm(seed, dim_x, dim_y, device="cpu"):
-#         random_state = seed
-#         device = device
-#         torch.manual_seed(random_state)
-#
-#         # setup of the inverse problem
-#         means = []
-#         for i in range(-2, 3):
-#             means += [torch.tensor([-8. * i, -8. * j] * (dim_x // 2), device=device) for j in range(-2, 3)]
-#         weights = torch.randn(len(means), device=device) ** 2
-#         weights = weights / weights.sum()
-#         ou_mixt_fun = partial(ou_mixt,
-#                               means=means,
-#                               dim=dim_x,
-#                               weights=weights)
-#
-#         mixt = ou_mixt_fun(1)
-#
-#         A, var_observations, init_obs = generate_measurement_equations(dim_x, dim_y, mixt, device)
-#         return (jnp.asarray(weights), jnp.concatenate([jnp.asarray(m)[None, :] for m in means], axis=0), jnp.asarray(A),
-#                 jnp.asarray(var_observations) * jnp.eye(1), jnp.asarray(init_obs))
-#     return setup_of_gmm(seed, dim_x, dim_y)
+#     key, subkey = jax.random.split(key)
+#     obs_cov = jnp.eye(dy) * jax.random.uniform(subkey) * jnp.max(s)
+#     return ws, ms, covs, obs_op, obs_cov

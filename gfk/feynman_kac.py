@@ -603,7 +603,7 @@ def make_mcgdiff(obs_op, obs_cov,
     res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)
     tau_ind = jnp.argmin(res)
     tau = ts[tau_ind]
-    ts_smc, ts_is = ts[:tau_ind + 1], ts[tau_ind + 1:]
+    ts_smc, ts_is = ts[:tau_ind + 1], ts[tau_ind:]  # both includes tau
     h = (1 - kappa) / alpha(tau) ** 2
 
     def _err():
@@ -615,11 +615,15 @@ def make_mcgdiff(obs_op, obs_cov,
                      None)
 
     # Run for noiseless MCGDiff + one-step importance sampling
+    def inpainting_rev_drift(x, t):
+        return VT @ rev_drift(VT.T @ x, t)
+
+
     def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path, full_final: bool = False):
         key_smc, key_is = jax.random.split(key)
         samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
-                                                    rev_drift, rev_dispersion, alpha, ts_smc,
-                                                    scaled_y * alpha(tau), inpaint_obs_op_inv, h,
+                                                    inpainting_rev_drift, rev_dispersion, alpha, ts_smc,
+                                                    scaled_y, inpaint_obs_op_inv, h,
                                                     nparticles, resampling, resampling_threshold, return_path, mode)
 
         if return_path:
@@ -631,7 +635,7 @@ def make_mcgdiff(obs_op, obs_cov,
         ess_tau = compute_ess(log_ws_tau)
 
         keys = jax.random.split(key_is, num=nparticles)
-        _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, rev_drift, rev_dispersion,
+        _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, inpainting_rev_drift, rev_dispersion,
                                               integration_nsteps=1, return_path=return_path)
         uss = jax.vmap(_em, in_axes=[0, 0], out_axes=1)(keys, us_tau)
         usT = uss[-1] if return_path else uss
@@ -639,7 +643,7 @@ def make_mcgdiff(obs_op, obs_cov,
         # The final step
         if not full_final:
             if return_path:
-                samples = jnp.concatenate([samples, uss], axis=0)
+                samples = jnp.concatenate([samples, uss[1:]], axis=0)
                 log_wss = jnp.concatenate([log_wss, log_ws_tau * jnp.ones((nsteps - tau_ind, nparticles))], axis=0)
             else:
                 samples = usT
@@ -660,7 +664,7 @@ def make_mcgdiff(obs_op, obs_cov,
             essT = compute_ess(log_wsT)
 
             if return_path:
-                samples = jnp.concatenate([samples, uss], axis=0)
+                samples = jnp.concatenate([samples, uss[1:]], axis=0)
                 log_wss = jnp.concatenate([log_wss,
                                            log_ws_tau * jnp.ones((nsteps - 1 - tau_ind, nparticles)),
                                            log_wsT * jnp.ones((1, nparticles))],

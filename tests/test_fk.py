@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.testing as npt
 from functools import partial
-from gfk.feynman_kac import compute_ess, smc_feynman_kac, make_fk_normal_likelihood
+from gfk.feynman_kac import compute_ess, smc_feynman_kac, make_fk_normal_likelihood, _noiseless_mcgdiff
 from gfk.resampling import stratified
 from gfk.filters import kf
 
@@ -101,3 +101,8 @@ def test_fk_aux_normal():
     x = np.random.randn(3)
 
     npt.assert_allclose(log_lk(y, x, 100), logpdf_ll(y, x), rtol=1e-10)
+
+
+def test_mcgdiff():
+    """Test the noiseless MCGDiff
+    """

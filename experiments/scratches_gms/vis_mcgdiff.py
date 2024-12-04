@@ -10,7 +10,7 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(666)
+key = jax.random.PRNGKey(321)
 
 # Define the forward process
 a, b = -1., 1.
@@ -25,7 +25,7 @@ ts = jnp.linspace(0., T, nsteps + 1)
 key, subkey = jax.random.split(key)
 dx, dy = 10, 1
 ncomponents = 5
-ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents)
+ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents, full_obs_cov=True)
 eigvals, eigvecs = jnp.linalg.eigh(covs)
 wTs, mTs, eigvalTs, score, rev_drift, rev_dispersion = make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
@@ -48,14 +48,14 @@ def alpha(t):
 
 # Do conditional sampling
 nparticles = 1024
-kappa = 1e-1
+kappa = 1e-4
 
 # The sampler
 smc_sampler = make_mcgdiff(obs_op, obs_cov, rev_drift, rev_dispersion, alpha, y, ts, kappa, mode='guided')
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True, full_final=False)
+ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True, full_final=True)
 
 plt.plot(ts, esss)
 plt.vlines(ts_smc[-1], esss.min(), esss.max(), colors='black', linestyles='--')
