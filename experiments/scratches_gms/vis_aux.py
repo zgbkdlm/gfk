@@ -10,7 +10,7 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(999)
+key = jax.random.PRNGKey(965)
 
 # Define the forward process
 a, b = -1., 1.
@@ -23,7 +23,7 @@ ts = jnp.linspace(0., T, nsteps + 1)
 
 # Define the data
 key, subkey = jax.random.split(key)
-dx, dy = 10, 1
+dx, dy = 100, 1
 ncomponents = 5
 ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, ncomponents, full_obs_cov=True)
 eigvals, eigvecs = jnp.linalg.eigh(covs)
@@ -62,7 +62,7 @@ ys = jax.vmap(lambda n: aux_semigroup(n, 0) * y, in_axes=0)(jnp.arange(nsteps + 
 vs = ys[::-1]
 
 # Do conditional sampling
-nparticles = 1024
+nparticles = 2 **14
 
 # The sampler
 smc_sampler, _ = make_fk_normal_likelihood(obs_op, obs_cov, rev_drift, rev_dispersion,

@@ -29,6 +29,7 @@ def generate_gm(key, dx, dy, ncomponents, full_obs_cov: bool = False):
 
     key, subkey = jax.random.split(key)
     s = jnp.sort(jax.random.uniform(subkey, (dy,)), descending=True) + 1e-3
+    # s = jnp.ones(dy)
     obs_op = u @ jnp.diag(s) @ vh
 
     key, subkey = jax.random.split(key)

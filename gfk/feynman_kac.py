@@ -8,11 +8,11 @@ from gfk.likelihoods import pushfwd_normal, pushfwd_normal_batch, bridge_log_lik
 from gfk.tools import nconcat, euler_maruyama, logpdf_mvn_chol, chol_solve
 from gfk.typings import JArray, JKey, PyTree, FloatScalar, NumericScalar, Array
 from functools import partial
-from typing import Callable, Tuple
+from typing import Callable, Tuple, Union
 
 
 def smc_feynman_kac(key: JKey,
-                    m0: Callable[[JArray], JArray],
+                    m0: Union[Callable[[JArray], JArray], JArray],
                     log_g0: Callable[[JArray], JArray],
                     m: Callable[[JArray, JArray, PyTree], JArray],
                     log_g: Callable[[JArray, JArray, PyTree], JArray],
@@ -32,8 +32,8 @@ def smc_feynman_kac(key: JKey,
     ----------
     key : JKey
         A JAX random key.
-    m0 : Callable [JKey -> (s, ...)]
-        The initial sampler that draws s independent samples.
+    m0 : Callable [JKey -> (s, ...)] or Array [(s, ...)]
+        The initial sampler that draws s independent samples. Or, it can also be an array of samples.
     log_g0 : Callable [(s, ...) -> (s, )]
         The initial (log) potential function. Given `s` samples, this function should return `s` weights in an array.
     m : Callable [JKey, (s, ...), PyTree -> (s, ...)]
@@ -67,7 +67,10 @@ def smc_feynman_kac(key: JKey,
     key_init, key_body = jax.random.split(key)
     flat_log_ws = -math.log(nparticles) * jnp.ones(nparticles)
 
-    samples0 = m0(key_init)
+    if callable(m0):
+        samples0 = m0(key_init)
+    else:
+        samples0 = m0
     log_ws0_ = log_g0(samples0)
     log_ws0 = log_ws0_ - jax.scipy.special.logsumexp(log_ws0_)
     ess0 = compute_ess(log_ws0)
@@ -121,7 +124,7 @@ def _make_bootstrap_tme(ts, log_likelihood, drift, dispersion, order, nparticles
     pass
 
 
-def _make_common(rev_drift, rev_dispersion):
+def _make_euler_disc(rev_drift, rev_dispersion):
     def r(us, t_k, t_kp1):
         return us + rev_drift(us, t_k) * (t_kp1 - t_k)
 
@@ -171,7 +174,7 @@ def make_fk_normal_likelihood(obs_op, obs_cov,
     """
     nsteps = ts.shape[0] - 1
 
-    r, rev_c = _make_common(rev_drift, rev_dispersion)
+    r, rev_c = _make_euler_disc(rev_drift, rev_dispersion)
 
     def trans_var(i):
         return rev_dispersion(ts[::-1][i]) ** 2 * (ts[i] - ts[i - 1])
@@ -286,7 +289,7 @@ def make_fk_seq_lin(logpdf_likelihood: Callable[[Array, Array], FloatScalar],
     """
     nsteps = ts.shape[0] - 1
 
-    r, rev_c = _make_common(rev_drift, rev_dispersion)
+    r, rev_c = _make_euler_disc(rev_drift, rev_dispersion)
 
     def propagate(u_k, k):
         def body(i, val):
@@ -400,7 +403,7 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
     """
     nsteps = ts.shape[0] - 1
 
-    r, rev_c = _make_common(rev_drift, rev_dispersion)
+    r, rev_c = _make_euler_disc(rev_drift, rev_dispersion)
 
     def logpdf_rev_transition(u_k, u_km1, t_k, t_km1):
         return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, r(u_km1, t_km1, t_k), rev_c(t_km1, t_k) ** 0.5), axis=-1)
@@ -490,7 +493,7 @@ def make_fk_wu(ll_target,
     """Generate the Feynamn--Kac model for Wu's construction.
     """
     nsteps, T = ts.shape[0] - 1, ts[-1]
-    r, rev_c = _make_common(rev_drift, rev_dispersion)
+    r, rev_c = _make_euler_disc(rev_drift, rev_dispersion)
 
     def sample_terminal_euler(u, t):
         return u + rev_drift(u, t) * (T - t)
@@ -574,11 +577,13 @@ def make_fk_wu(ll_target,
         raise ValueError('Invalid mode.')
 
 
-def make_mcgdiff(obs_op, obs_cov,
-                 rev_drift, rev_dispersion,
-                 alpha,
-                 y, ts, kappa,
-                 mode: str = 'guided'):
+def make_mcgdiff(obs_op: Array, obs_cov: Array,
+                 rev_drift: Callable, rev_dispersion: Callable,
+                 alpha: Callable,
+                 y: Array, ts_smc: Array, ts_is: Array, kappa: float,
+                 mode: str = 'guided',
+                 resample_tau: bool = False,
+                 full_final: bool = False):
     """This deals with Y = H X + eps,  eps ~ N(0, v), where v = L L^T.
     This converts to a problem on an inpainting basis. Specifically,
         L^-1 Y = L^-1 H X + N(0, I)
@@ -586,10 +591,38 @@ def make_mcgdiff(obs_op, obs_cov,
                = U S bar{Z} + N(0, I),   Z = V^T X
         U^T L^-1 Y = S bar{Z} + N(0, I),
 
+    Parameters
+    ----------
+    obs_op : Array (dy, dx)
+        The observation operator.
+    obs_cov : Array (dy, dy)
+        The observation covariance.
+    rev_drift : Callable (..., float) -> (...)
+        The reversal drift function.
+    rev_dispersion : Callable (float) -> float
+        The reversal dispersion function.
+    alpha : Callable (float) -> float
+        The forward process semigroup.
+    y : Array (dy, )
+        The observation.
+    ts_smc : Array (j + 1, )
+        The time points for running the noiseless SMC.
+    ts_is : Array (k + 1, )
+        The time points for running the additional importance sampling. j + k = nsteps
+    kappa : float
+        The kappa parameter.
+    mode : str, default='guided'
+        The mode of the SMC sampler.
+    resample_tau : bool, default=False
+        Whether to resample at t = tau.
+    full_final : bool, default=False
+        Whether to use an importance sampling between t = tau and t = T.
+
     Notes
     -----
-    Tau must be fixed in order to use JIT. To do so, assume that everything except y is static.
+    Tau must be fixed in order to use JIT. To do so, assume that ts is fixed.
     """
+    ts = jnp.concatenate([ts_smc, ts_is[1:]])
     nsteps = ts.shape[0] - 1
     dy, dx = obs_op.shape
     chol = jnp.linalg.cholesky(obs_cov)
@@ -600,26 +633,18 @@ def make_mcgdiff(obs_op, obs_cov,
     inpaint_obs_op_inv = jnp.diag(1 / S)
 
     # Compute tau with fixed N(0, I)
-    res = jnp.abs((1 - alpha(ts) ** 2) / alpha(ts) ** 2 - 1.)
-    tau_ind = jnp.argmin(res)
-    tau = ts[tau_ind]
-    ts_smc, ts_is = ts[:tau_ind + 1], ts[tau_ind:]  # both includes tau
+    tau = ts_smc[-1]
+    tau_ind = ts_smc.shape[0] - 1
     h = (1 - kappa) / alpha(tau) ** 2
 
-    def _err():
-        raise ValueError('Invalid tau.')
-
-    _ = jax.lax.cond(tau_ind > nsteps - 2,
-                     lambda _: jax.debug.callback(_err),
-                     lambda _: None,
-                     None)
+    if tau_ind > nsteps - 2:
+        raise ValueError(f'tau {tau} is too large.')
 
     # Run for noiseless MCGDiff + one-step importance sampling
     def inpainting_rev_drift(x, t):
         return VT @ rev_drift(VT.T @ x, t)
 
-
-    def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path, full_final: bool = False):
+    def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
         key_smc, key_is = jax.random.split(key)
         samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
                                                     inpainting_rev_drift, rev_dispersion, alpha, ts_smc,
@@ -627,10 +652,19 @@ def make_mcgdiff(obs_op, obs_cov,
                                                     inpaint_obs_op_inv, h,
                                                     nparticles, resampling, resampling_threshold, return_path, mode)
 
+        _, subkey = jax.random.split(key_smc)
         if return_path:
+            if resample_tau:
+                inds = resampling(subkey, jnp.exp(log_wss[-1]))
+                samples = samples.at[-1].set(samples[-1, inds])
+                log_wss = log_wss.at[-1].set(-jnp.ones(nparticles) * math.log(nparticles))
             us_tau = samples[-1]
             log_ws_tau = log_wss[-1]
         else:
+            if resample_tau:
+                inds = resampling(subkey, jnp.exp(log_wss))
+                samples = samples[inds]
+                log_wss = -jnp.ones(nparticles) * math.log(nparticles)
             us_tau = samples
             log_ws_tau = log_wss
         ess_tau = compute_ess(log_ws_tau)
@@ -639,7 +673,7 @@ def make_mcgdiff(obs_op, obs_cov,
         _em = lambda key_, u_: euler_maruyama(key_, u_, ts_is, inpainting_rev_drift, rev_dispersion,
                                               integration_nsteps=1, return_path=return_path)
         uss = jax.vmap(_em, in_axes=[0, 0], out_axes=1)(keys, us_tau)
-        usT = uss[-1] if return_path else uss
+        usT = uss[-1] if return_path else uss.T
 
         # The final step
         if not full_final:
@@ -654,9 +688,11 @@ def make_mcgdiff(obs_op, obs_cov,
             @partial(jax.vmap, in_axes=[0, None])
             def log_lk(u, t):
                 return jax.lax.cond(t == ts[-1],
-                                    lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(scaled_y, inpaint_obs_op @ u[:dy], 1.)),
+                                    lambda _: jnp.sum(
+                                        jax.scipy.stats.norm.logpdf(scaled_y, inpaint_obs_op @ u[:dy], 1.)),
                                     lambda _: jnp.sum(jax.scipy.stats.norm.logpdf(u[:dy],
-                                                                                  alpha(t) * inpaint_obs_op_inv @ scaled_y,
+                                                                                  alpha(
+                                                                                      t) * inpaint_obs_op_inv @ scaled_y,
                                                                                   (1 - h * alpha(t) ** 2) ** 0.5)),
                                     None)
 
@@ -676,7 +712,7 @@ def make_mcgdiff(obs_op, obs_cov,
 
             esss = jnp.concatenate([esss, ess_tau * jnp.ones(nsteps - 1 - tau_ind), essT * jnp.ones(1)])
 
-        return ts_smc, ts_is, jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
+        return jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
 
     return smc_sampler
 
@@ -698,7 +734,7 @@ def _noiseless_mcgdiff(key, m0,
     """
     nsteps = ts.shape[0] - 1
     dy = y.shape[0]
-    r, rev_c = _make_common(rev_drift, rev_dispersion)
+    r, rev_c = _make_euler_disc(rev_drift, rev_dispersion)
     inv_y = obs_op_inv @ y
 
     def log_lk(u, t):

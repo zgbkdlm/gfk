@@ -10,7 +10,7 @@ from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 
 jax.config.update("jax_enable_x64", True)
-key = jax.random.PRNGKey(999)
+key = jax.random.PRNGKey(965)
 
 # Define the forward process
 a, b = -1., 1.
@@ -48,14 +48,15 @@ def alpha(t):
 
 # Do conditional sampling
 nparticles = 1024
-kappa = 1e-3
+kappa = 1e-4
 
 # The sampler
-smc_sampler = make_mcgdiff(obs_op, obs_cov, rev_drift, rev_dispersion, alpha, y, ts, kappa, mode='guided')
+smc_sampler = make_mcgdiff(obs_op, obs_cov, rev_drift, rev_dispersion, alpha, y, ts, kappa,
+                           mode='guided', resample_tau=True, full_final=False)
 
 # samples usT, weights log_wsT, and effective sample sizes esss
 key, subkey = jax.random.split(key)
-ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True, full_final=False)
+ts_smc, ts_is, uss, log_wss, esss = smc_sampler(subkey, m0, nparticles, stratified, 0.7, True)
 
 plt.plot(ts, esss)
 plt.vlines(ts_smc[-1], esss.min(), esss.max(), colors='black', linestyles='--')
@@ -76,12 +77,12 @@ fig = plt.figure()
 ax = fig.add_subplot(projection='3d')
 
 for i in range(0, nsteps + 1, nsteps // 16):
-    hists, bin_edges = np.histogram(uss[i, :, 0], weights=jnp.exp(log_wss[i]), bins=50, density=True)
+    hists, bin_edges = np.histogram(uss[i, :, 2], weights=jnp.exp(log_wss[i]), bins=50, density=True)
     bin_widths = np.diff(bin_edges)
     ax.bar(bin_edges[:-1], hists, width=bin_widths, align='edge', zs=ts[i], zdir='x', color='black', alpha=0.5)
 
 # Plot the true histogram
-hists, bin_edges = np.histogram(post_samples[:, 0], bins=50, density=True)
+hists, bin_edges = np.histogram(post_samples[:, 2], bins=50, density=True)
 bin_widths = np.diff(bin_edges)
 ax.bar(bin_edges[:-1], hists, width=bin_widths, align='edge', zs=ts[-1], zdir='x', color='tab:red', alpha=0.5)
 
