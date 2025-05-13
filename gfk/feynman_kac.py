@@ -488,15 +488,18 @@ def make_fk_bridge(ll_target: Callable[[Array, Array], FloatScalar],
 def make_fk_wu(ll_target,
                rev_drift, rev_dispersion,
                ts, y, langevin_step_size: float,
+               cond_expec: Callable[[JArray, float], JArray],
                mode: str = 'guided',
-               proposal: str = 'langevin'):
+               proposal: str = 'direct',
+               bypass_smc: bool = False):
     """Generate the Feynamn--Kac model for Wu's construction.
     """
     nsteps, T = ts.shape[0] - 1, ts[-1]
     r, rev_c = _make_euler_disc(rev_drift, rev_dispersion)
 
-    def sample_terminal_euler(u, t):
-        return u + rev_drift(u, t) * (T - t)
+    # def sample_terminal_euler(u, t):
+    #     # This is not Tweedie.
+    #     return u + rev_drift(u, t) * (T - t)
 
     def logpdf_rev_transition(u_k, u_km1, t_k, t_km1):
         return jnp.sum(jax.scipy.stats.norm.logpdf(u_k, r(u_km1, t_km1, t_k), rev_c(t_km1, t_k) ** 0.5), axis=-1)
@@ -535,18 +538,21 @@ def make_fk_wu(ll_target,
     logpdf_m = logpdf_m_langevin if proposal == 'langevin' else logpdf_m_direct
 
     def log_lk(u_k, t_k):
-        u_N = sample_terminal_euler(u_k, t_k)
+        u_N = cond_expec(u_k, t_k)
         return ll_target(y, u_N)
 
     @partial(jax.vmap, in_axes=[0, 0, None])
     def log_g(u_k, u_km1, tree_param):
         t_km1, t_k = tree_param
-        return (log_lk(u_k, t_k) + logpdf_rev_transition(u_k, u_km1, t_k, t_km1)
-                - log_lk(u_km1, t_km1) - logpdf_m(u_k, u_km1, tree_param))
+        if bypass_smc:
+            return 0.
+        else:
+            return (log_lk(u_k, t_k) + logpdf_rev_transition(u_k, u_km1, t_k, t_km1)
+                    - log_lk(u_km1, t_km1) - logpdf_m(u_k, u_km1, tree_param))
 
     @partial(jax.vmap, in_axes=[0])
     def log_g0(us):
-        return log_lk(us, ts[0])
+        return 0. if bypass_smc else log_lk(us, ts[0])
 
     def guided_smc(key, m0, nparticles, resampling, resampling_threshold, return_path):
         return smc_feynman_kac(key, m0, log_g0, m, log_g,

@@ -17,22 +17,19 @@ parser.add_argument('--dx', type=int, default=10, help='The x dimension.')
 parser.add_argument('--dy', type=int, default=1, help='The y dimension.')
 parser.add_argument('--ncomponents', type=int, default=10, help='The number of GM components.')
 parser.add_argument('--offset', type=float, default=0., help='The offset that makes the observation an outlier.')
-parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number of particles.')
-parser.add_argument('--nsamples', type=int, default=2 ** 14, help='The number of samples.')
-parser.add_argument('--chain', action='store_true', default=False,
-                    help='Run SMC as a chain. Note that this will incur additional biases, '
-                         'though more memory feasible. If not in chain model, nparticles should = nsamples.')
+parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number of particles; '
+                                                                    'the same as with the number of samples')
+parser.add_argument('--tweedie', action='store_true', help='Tweedie or Euler')
+parser.add_argument('--bypass_smc', action='store_true', help='Use standard conditional SDE sampling.')
 args = parser.parse_args()
 
-print(f'Running Wu (chain={args.chain}) GM experiment with MCs ({args.id_l}-{args.id_u}), dx={args.dx}, dy={args.dy}')
+print(f'Running Wu |Tweedie {args.tweedie}| No SMC {args.bypass_smc} | '
+      f'(GM experiment with MCs ({args.id_l}-{args.id_u}), dx={args.dx}, dy={args.dy})')
 jax.config.update("jax_enable_x64", True)
 keys_mc = np.load('rnd_keys.npy')[args.id_l:args.id_u + 1]
 
-if not args.chain and args.nparticles != args.nsamples:
-    raise ValueError('If not running in chain mode, nparticles should be equal to nsamples.')
-
 # Define the forward process
-a, b = -1., 1.
+a, b = -1., math.sqrt(2)
 
 # Times
 t0, T = 0., 2.
@@ -42,33 +39,29 @@ ts = jnp.linspace(0., T, nsteps + 1)
 
 # Define the SMC conditional sampler
 nparticles = args.nparticles
-nsamples = args.nsamples
+nsamples = nparticles
 
 
 # The sampler
 @jax.jit
 def sampler(key_, obs_op_, obs_cov_, y_, init, target):
     ws_, ms_, eigvals_, eigvecs_ = target
-    *_, rev_drift, rev_dispersion = make_gm_bridge(ws_, ms_, eigvals_, eigvecs_, a, b, t0, T)
+    *_, score, rev_drift, rev_dispersion = make_gm_bridge(ws_, ms_, eigvals_, eigvecs_, a, b, t0, T)
     chol = jnp.linalg.cholesky(obs_cov_)
+
+    def cond_expec_tweedie(u, t):
+        alp = jnp.exp(a * (T - t) / 2)
+        return 1 / alp * (u - (1 - alp ** 2) * score(u, T - t))
+
+    def cond_expec_euler(u, t):
+        return u + rev_drift(u, t) * (T - t)
+
     smc = make_fk_wu(lambda y_, u: logpdf_mvn_chol(y_, obs_op_ @ u, chol),
                      rev_drift, rev_dispersion,
                      ts, y_, dt * 2,
-                     mode='guided', proposal='direct')
-
-    def chain(key__):
-        key__, subkey_ = jax.random.split(key__)
-        usT, log_wsT, ess = smc(subkey_, init, nparticles, stratified, 0.7, False)
-
-        key__, subkey_ = jax.random.split(key__)
-        return jax.random.choice(subkey_, usT, p=jnp.exp(log_wsT), axis=0), ess
-
-    if args.chain:
-        keys_ = jax.random.split(key_, num=nsamples)
-        samples_, esss_ = jax.vmap(chain, in_axes=[0])(keys_)
-        log_ws_ = -math.log(nsamples) * jnp.ones(nsamples)
-    else:
-        samples_, log_ws_, esss_ = smc(key_, init, nparticles, stratified, 0.7, False)
+                     cond_expec_tweedie if args.tweedie else cond_expec_euler,
+                     mode='guided', proposal='direct', bypass_smc=True if args.bypass_smc else False)
+    samples_, log_ws_, esss_ = smc(key_, init, nparticles, stratified, 0.7, False)
     return samples_, log_ws_, esss_
 
 

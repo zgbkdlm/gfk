@@ -17,22 +17,17 @@ parser.add_argument('--dx', type=int, default=10, help='The x dimension.')
 parser.add_argument('--dy', type=int, default=1, help='The y dimension.')
 parser.add_argument('--ncomponents', type=int, default=10, help='The number of GM components.')
 parser.add_argument('--offset', type=float, default=0., help='The offset that makes the observation an outlier.')
-parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number of particles.')
-parser.add_argument('--nsamples', type=int, default=2 ** 14, help='The number of samples.')
-parser.add_argument('--chain', action='store_true', default=False,
-                    help='Run SMC as a chain. Note that this will incur additional biases, '
-                         'though more memory feasible. If not in chain model, nparticles should = nsamples.')
+parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number of particles; '
+                                                                    'the same as with the number of samples')
 args = parser.parse_args()
 
-print(f'Running aux (chain={args.chain}) GM experiment with MCs ({args.id_l}-{args.id_u}), dx={args.dx}, dy={args.dy}')
+print(f'Running aux '
+      f'(GM experiment with MCs ({args.id_l}-{args.id_u}), dx={args.dx}, dy={args.dy})')
 jax.config.update("jax_enable_x64", True)
 keys_mc = np.load('rnd_keys.npy')[args.id_l:args.id_u + 1]
 
-if not args.chain and args.nparticles != args.nsamples:
-    raise ValueError('If not running in chain mode, nparticles should be equal to nsamples.')
-
 # Define the forward process
-a, b = -1., 1.
+a, b = -1., math.sqrt(2)
 
 # Times
 t0, T = 0., 2.
@@ -58,7 +53,7 @@ def aux_trans_var(i):
 
 # Define the SMC conditional sampler
 nparticles = args.nparticles
-nsamples = args.nsamples
+nsamples = nparticles
 
 
 # The sampler
@@ -69,20 +64,7 @@ def sampler(key_, obs_op_, obs_cov_, vs_, init, target):
     smc, _ = make_fk_normal_likelihood(obs_op_, obs_cov_, rev_drift, rev_dispersion,
                                        aux_trans_op, aux_semigroup, aux_trans_var,
                                        ts, mode='guided')
-
-    def chain(key__):
-        key__, subkey_ = jax.random.split(key__)
-        usT, log_wsT, ess = smc(subkey_, init, vs_, nparticles, stratified, 0.7, False)
-
-        key__, subkey_ = jax.random.split(key__)
-        return jax.random.choice(subkey_, usT, p=jnp.exp(log_wsT), axis=0), ess
-
-    if args.chain:
-        keys_ = jax.random.split(key_, num=nsamples)
-        samples_, esss_ = jax.vmap(chain, in_axes=[0])(keys_)
-        log_ws_ = -math.log(nsamples) * jnp.ones(nsamples)
-    else:
-        samples_, log_ws_, esss_ = smc(key_, init, vs_, nparticles, stratified, 0.7, False)
+    samples_, log_ws_, esss_ = smc(key_, init, vs_, nparticles, stratified, 0.7, False)
     return samples_, log_ws_, esss_
 
 
