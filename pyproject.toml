@@ -34,7 +34,7 @@ dependencies = [
     'matplotlib==3.9.2',
     'flax==0.10.0',
     'tme==0.2.0',
-    'ott-jax==0.4.9'
+    'POT==0.9.5'
 ]
 
 [project.optional-dependencies]
