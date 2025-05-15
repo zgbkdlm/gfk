@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import argparse
-from ott.tools.sliced import sliced_wasserstein
+from ot.sliced import sliced_wasserstein_distance
 from gfk.synthetic_targets import make_gm_bridge, gm_lin_posterior
 from gfk.tools import sampling_gm
 from gfk.feynman_kac import make_fk_normal_likelihood
@@ -103,7 +103,7 @@ for k, key_mc in enumerate(keys_mc):
     samples, log_ws, esss = sampler(key_algo, obs_op, obs_cov, vs, init_particles, (ws, ms, eigvals, eigvecs))
 
     # Compute errors
-    swd = sliced_wasserstein(samples, post_samples, a=jnp.exp(log_ws))[0]
+    swd = sliced_wasserstein_distance(samples, post_samples, a=jnp.exp(log_ws), n_projections=1000, p=1)
     print(f'{k} | Sliced Wasserstein distance: {swd}')
 
     # Save results

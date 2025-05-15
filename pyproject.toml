@@ -28,8 +28,8 @@ classifiers = [
 keywords = ['Markov models']
 dependencies = [
     'numpy==2.1.2',
-    'jax==0.4.35',
-    'jaxlib==0.4.35',
+    'jax==0.6.0',
+    'jaxlib==0.6.0',
     'scipy==1.14.1',
     'matplotlib==3.9.2',
     'flax==0.10.0',
