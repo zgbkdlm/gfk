@@ -20,10 +20,10 @@ parser.add_argument('--offset', type=float, default=0., help='The offset that ma
 parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number of particles; '
                                                                     'the same as with the number of samples')
 parser.add_argument('--tweedie', action='store_true', help='Tweedie or Euler')
-parser.add_argument('--bypass_smc', action='store_true', help='Use standard conditional SDE sampling.')
+parser.add_argument('--no_smc', action='store_true', help='Use standard conditional SDE sampling.')
 args = parser.parse_args()
 
-print(f'Running Wu |Tweedie {args.tweedie}| No SMC {args.bypass_smc} | '
+print(f'Running Wu |Tweedie {args.tweedie}| No SMC {args.no_smc} | '
       f'(GM experiment with MCs ({args.id_l}-{args.id_u}), dx={args.dx}, dy={args.dy})')
 jax.config.update("jax_enable_x64", True)
 keys_mc = np.load('rnd_keys.npy')[args.id_l:args.id_u + 1]
@@ -60,7 +60,7 @@ def sampler(key_, obs_op_, obs_cov_, y_, init, target):
                      rev_drift, rev_dispersion,
                      ts, y_, dt * 2,
                      cond_expec_tweedie if args.tweedie else cond_expec_euler,
-                     mode='guided', proposal='direct', bypass_smc=True if args.bypass_smc else False)
+                     mode='guided', proposal='direct', bypass_smc=True if args.no_smc else False)
     samples_, log_ws_, esss_ = smc(key_, init, nparticles, stratified, 0.7, False)
     return samples_, log_ws_, esss_
 
@@ -101,7 +101,7 @@ for k, key_mc in enumerate(keys_mc):
     print(f'{k} | Sliced Wasserstein distance: {swd}')
 
     # Save results
-    fn_prefix = 'cond-sde' if args.bypass_smc else 'wu' + '-' + 'tweedie' if args.tweedie else 'euler'
-    filename = fn_prefix + '-' + ''
-    np.savez(f'./results/gms/wu-{k}',
+    fn_prefix = 'cond-sde' if args.no_smc else 'wu' + '-' + 'tweedie' if args.tweedie else 'euler'
+    filename = fn_prefix + f'-{dx}-{nparticles}-{args.offset}-{k}'
+    np.savez(f'./results/gms/{filename}',
              samples=samples, log_ws=log_ws, esss=esss, post_samples=post_samples, swd=swd)
