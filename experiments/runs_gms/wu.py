@@ -101,7 +101,7 @@ for k, key_mc in enumerate(keys_mc):
     print(f'{k} | Sliced Wasserstein distance: {swd}')
 
     # Save results
-    fn_prefix = 'dps' if args.no_smc else 'wu' + '-' + 'tweedie' if args.tweedie else 'euler'
+    fn_prefix = f'{"dps" if args.no_smc else "wu"}' + '-' + f'{"tweedie" if args.tweedie else "euler"}'
     filename = fn_prefix + f'-{dx}-{nparticles}-{args.offset}-{k}'
     np.savez(f'./results/gms/{filename}',
              samples=samples, log_ws=log_ws, esss=esss, post_samples=post_samples, swd=swd)
