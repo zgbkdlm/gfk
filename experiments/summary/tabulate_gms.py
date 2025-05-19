@@ -1,7 +1,7 @@
 import numpy as np
 
 methods = ['wu-tweedie', 'wu-euler', 'dps-tweedie', 'dps-euler', 'aux']
-dxs = [100, ]
+dxs = [128, 256]
 offsets = [0., 5., 10.]
 nparticles = 16384
 nmcs = 100
