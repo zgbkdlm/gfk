@@ -22,7 +22,7 @@ parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number 
 parser.add_argument('--noiseless', action='store_true', help='Noiseless observations.')
 args = parser.parse_args()
 
-print(f'Running aux '
+print(f'Running {"aux-noiseless" if args.noiseless else "aux"} '
       f'(GM experiment with MCs ({args.id_l}-{args.id_u}), dx={args.dx}, dy={args.dy})')
 jax.config.update("jax_enable_x64", True)
 keys_mc = np.load('rnd_keys.npy')[args.id_l:args.id_u + 1]
