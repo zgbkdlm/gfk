@@ -7,7 +7,7 @@ import itertools
 import math
 
 
-def generate_gm(key, dx, dy, ncomponents, full_obs_cov: bool = False):
+def generate_gm(key, dx, dy, ncomponents, full_obs_cov: bool = False, noiseless: bool = False):
     """Generate a GM (with observation) model.
     This is similar to the one used in the MCGDiff paper but is more challenging.
     But this has more randomness in the setting; may require more MC runs for convincing results.
@@ -38,6 +38,9 @@ def generate_gm(key, dx, dy, ncomponents, full_obs_cov: bool = False):
         obs_cov = jnp.outer(obs_cov_rnds, obs_cov_rnds) + jnp.eye(dy) * max(s) ** 2
     else:
         obs_cov = jnp.eye(dy) * jax.random.uniform(subkey) * jnp.max(s) ** 2
+
+    if noiseless:
+        obs_cov = jnp.eye(dy) * 1e-8
     return ws, ms, covs, obs_op, obs_cov
 
 

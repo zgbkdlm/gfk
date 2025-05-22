@@ -19,6 +19,7 @@ parser.add_argument('--ncomponents', type=int, default=10, help='The number of G
 parser.add_argument('--offset', type=float, default=0., help='The offset that makes the observation an outlier.')
 parser.add_argument('--nparticles', type=int, default=2 ** 14, help='The number of particles; '
                                                                     'the same as with the number of samples')
+parser.add_argument('--noiseless', action='store_true', help='Noiseless observations.')
 args = parser.parse_args()
 
 print(f'Running aux '
@@ -75,7 +76,8 @@ for k, key_mc in enumerate(keys_mc):
     # Generate the model and data
     dx, dy = args.dx, args.dy
     key_model, subkey = jax.random.split(key_model)
-    ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, args.ncomponents, full_obs_cov=True)
+    ws, ms, covs, obs_op, obs_cov = generate_gm(subkey, dx, dy, args.ncomponents,
+                                                full_obs_cov=True, noiseless=args.noiseless)
     eigvals, eigvecs = jnp.linalg.eigh(covs)
     wTs, mTs, eigvalTs, *_ = make_gm_bridge(ws, ms, eigvals, eigvecs, a, b, t0, T)
 
@@ -107,7 +109,7 @@ for k, key_mc in enumerate(keys_mc):
     print(f'{k} | Sliced Wasserstein distance: {swd}')
 
     # Save results
-    fn_prefix = 'aux'
+    fn_prefix = 'aux-noiseless' if args.noiseless else 'aux'
     filename = fn_prefix + f'-{dx}-{nparticles}-{args.offset}-{k}'
     np.savez(f'./results/gms/{filename}',
              samples=samples, log_ws=log_ws, esss=esss, post_samples=post_samples, swd=swd)

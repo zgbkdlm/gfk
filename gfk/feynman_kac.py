@@ -652,11 +652,11 @@ def make_mcgdiff(obs_op: Array, obs_cov: Array,
 
     def smc_sampler(key, m0, nparticles, resampling, resampling_threshold, return_path):
         key_smc, key_is = jax.random.split(key)
-        samples, log_wss, esss = _noiseless_mcgdiff(key_smc, m0,
-                                                    inpainting_rev_drift, rev_dispersion, alpha, ts_smc,
-                                                    scaled_y,
-                                                    inpaint_obs_op_inv, h,
-                                                    nparticles, resampling, resampling_threshold, return_path, mode)
+        samples, log_wss, esss = _inpainting_mcgdiff(key_smc, m0,
+                                                     inpainting_rev_drift, rev_dispersion, alpha, ts_smc,
+                                                     scaled_y,
+                                                     inpaint_obs_op_inv, h,
+                                                     nparticles, resampling, resampling_threshold, return_path, mode)
 
         _, subkey = jax.random.split(key_smc)
         if return_path:
@@ -723,12 +723,34 @@ def make_mcgdiff(obs_op: Array, obs_cov: Array,
     return smc_sampler
 
 
-def _noiseless_mcgdiff(key, m0,
-                       rev_drift, rev_dispersion, alpha: Callable,
-                       ts,
-                       y: JArray, obs_op_inv, h,
-                       nparticles, resampling, resampling_threshold, return_path,
-                       mode: str = 'guided') -> Tuple[JArray, JArray, JArray]:
+def make_noiseless_mcgdiff(obs_op: Array,
+                           rev_drift: Callable, rev_dispersion: Callable,
+                           alpha: Callable,
+                           y: Array, ts: Array):
+    U, S, VT = jnp.linalg.svd(obs_op, full_matrices=True)
+    inpaint_obs_op = U @ S
+    inpaint_obs_op_inv = jnp.diag(1 / jnp.diag(S)) @ U.T
+
+    def inpainting_rev_drift(z, t):
+        return VT @ rev_drift(VT.T @ z, t)
+
+    def smc_sampler(key, m0, nparticles, resampling, resampling_threshold):
+        key_smc, key_is = jax.random.split(key)
+        samples, log_wss, esss = _inpainting_mcgdiff(key_smc, m0,
+                                                     inpainting_rev_drift, rev_dispersion, alpha, ts,
+                                                     y,
+                                                     inpaint_obs_op_inv, 1.,
+                                                     nparticles, resampling, resampling_threshold)
+        return jnp.einsum('ji,...j->...i', VT, samples), log_wss, esss
+
+    return smc_sampler
+
+
+def _inpainting_mcgdiff(key, m0,
+                        rev_drift, rev_dispersion, alpha: Callable,
+                        ts,
+                        y: JArray, obs_op_inv, h,
+                        nparticles, resampling, resampling_threshold) -> Tuple[JArray, JArray, JArray]:
     """This deals with Y = H bar{X} using MCGDiff, and assume that H has a pseudo-inverse.
 
     Notes
@@ -787,9 +809,9 @@ def _noiseless_mcgdiff(key, m0,
         t_km1, t_k = tree_param
         return log_lk(u_k, t_k) - log_lk(u_km1, t_km1)
 
-    return smc_feynman_kac(key, m0, log_g0, m if mode == 'guided' else bs_m, log_g if mode == 'guided' else bs_log_g,
+    return smc_feynman_kac(key, m0, log_g0, m, log_g,
                            (ts[:-1], ts[1:]),
-                           nparticles, nsteps, resampling, resampling_threshold, return_path)
+                           nparticles, nsteps, resampling, resampling_threshold, False)
 
 
 def make_dc():
