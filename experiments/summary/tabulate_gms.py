@@ -27,7 +27,7 @@ print('===========================')
 methods = ['aux-noiseless', 'mcgdiff']
 for method in methods:
     for dx in dxs:
-        prefix = method + f'-{dx}-{nparticles}-0.'
+        prefix = method + f'-{dx}-{nparticles}-0.0'
 
         swds = np.zeros(nmcs)
         for k in range(nmcs):
