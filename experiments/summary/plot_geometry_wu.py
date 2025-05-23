@@ -15,9 +15,9 @@ plt.rcParams.update({
     'text.usetex': True,
     'font.family': 'serif',
     'text.latex.preamble': r'\usepackage{amsmath,amsfonts}',
-    'font.size': 16})
+    'font.size': 20})
 
-seed = 22
+seed = 83
 key_mc = np.load('rnd_keys.npy')[seed]
 tweedie = True
 
@@ -113,10 +113,11 @@ bin_widths = np.diff(bin_edges)
 ax.bar(bin_edges[:-1], hists, width=bin_widths, align='edge', zs=ts[-1], zdir='x', color='tab:red', alpha=0.5)
 
 ax.set_xlabel('Time $t$')
-ax.set_ylabel('$x$ (1D marginal)')
+ax.set_ylabel('$x$')
 ax.set_zlabel('Histogram')
 
-plt.tight_layout(pad=0.1)
-plt.subplots_adjust(wspace=0.15)
-plt.savefig('geometry_wu.pdf', transparent=True, bbox_inches=Bbox([[2.8, 1], [13.2, 8.75]]))
+ax.xaxis.labelpad=18
+ax.yaxis.labelpad=10
+
+plt.savefig('geometry_wu.pdf', transparent=True, bbox_inches=Bbox([[4.1, 1.7], [12.2, 7.8]]))
 plt.show()
