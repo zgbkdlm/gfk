@@ -124,6 +124,8 @@ ax.set_xlabel('Time $t$')
 ax.set_ylabel('$x$')
 ax.set_zlabel('Histogram')
 
+ax.set_zlim(0., 0.5)
+
 ax.xaxis.labelpad=18
 ax.yaxis.labelpad=10
 
