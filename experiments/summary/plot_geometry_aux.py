@@ -122,7 +122,7 @@ ax.bar(bin_edges[:-1], hists, width=bin_widths, align='edge', zs=ts[-1], zdir='x
 
 ax.set_xlabel('Time $t$')
 ax.set_ylabel('$x$')
-ax.set_zlabel('Histogram')
+ax.set_zlabel('Histogram $Q_{t_k}$')
 
 ax.set_zlim(0., 0.5)
 

@@ -10,6 +10,9 @@ from gfk.feynman_kac import make_fk_wu
 from gfk.resampling import stratified
 from gfk.experiments import generate_gm
 from matplotlib.transforms import Bbox
+from matplotlib.text import Annotation
+from mpl_toolkits.mplot3d.proj3d import proj_transform
+from mpl_toolkits.mplot3d.axes3d import Axes3D
 
 plt.rcParams.update({
     'text.usetex': True,
@@ -114,12 +117,41 @@ ax.bar(bin_edges[:-1], hists, width=bin_widths, align='edge', zs=ts[-1], zdir='x
 
 ax.set_xlabel('Time $t$')
 ax.set_ylabel('$x$')
-ax.set_zlabel('Histogram')
+ax.set_zlabel('Histogram $Q_{t_k}$')
 
 ax.set_zlim(0., 0.5)
 
-ax.xaxis.labelpad=18
-ax.yaxis.labelpad=10
+ax.xaxis.labelpad = 18
+ax.yaxis.labelpad = 10
+
+
+# Annotate
+class Annotation3D(Annotation):
+    """This is copied from https://gist.github.com/WetHat/1d6cd0f7309535311a539b42cccca89c.
+    Thank you!"""
+
+    def __init__(self, text, xyz, *args, **kwargs):
+        super().__init__(text, xy=(0, 0), *args, **kwargs)
+        self._xyz = xyz
+
+    def draw(self, renderer):
+        x2, y2, z2 = proj_transform(*self._xyz, self.axes.M)
+        self.xy = (x2, y2)
+        super().draw(renderer)
+
+
+def _annotate3D(ax, text, xyz, *args, **kwargs):
+    '''Add anotation `text` to an `Axes3d` instance.'''
+
+    annotation = Annotation3D(text, xyz, *args, **kwargs)
+    ax.add_artist(annotation)
+
+
+setattr(Axes3D, 'annotate3D', _annotate3D)
+ax.annotate3D(' ', (0, -1.5, 0.3),
+              xytext=(-80, -80),
+              textcoords='offset points',
+              arrowprops=dict(arrowstyle='-|>', ec='tab:red', fc='tab:red', lw=2, alpha=.5))
 
 plt.savefig('geometry_wu.pdf', transparent=True, bbox_inches=Bbox([[4.1, 1.7], [12.2, 7.8]]))
 plt.show()

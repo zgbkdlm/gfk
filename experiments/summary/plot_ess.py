@@ -16,7 +16,7 @@ ts = np.linspace(0., T, nsteps + 1)
 seed = 99
 
 methods = ['wu-euler', 'aux']
-method_labels = ['tSMC', 'CoSMC']
+method_labels = ['TDS', 'B$^0$SMC']
 method_style = ['--', '-']
 dx = 256
 offsets = [0., 5., 10.]
@@ -34,7 +34,7 @@ for method, label, style in zip(methods, method_labels, method_style):
         axes[j].grid(linestyle='--', alpha=0.3, which='both')
         axes[j].set_ylim(0, 16384)
         axes[j].set_xlabel('$t$')
-        axes[j].set_title(f'$y_o = {int(offset)}$')
+        axes[j].set_title(rf'$\omega = {int(offset)}$')
 
 axes[0].set_ylabel('ESS (max. 16384)')
 axes[0].legend(loc='lower right', fontsize=20)
