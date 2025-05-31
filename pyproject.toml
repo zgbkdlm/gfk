@@ -11,7 +11,7 @@ version = '0.0.1'
 authors = [
     { name='Zheng Zhao', email='zz@zabemon.com' },
 ]
-description = 'Efficient proposals in '
+description = 'Generartive posterior sampling with informative likelihoods'
 readme = 'README.md'
 license = {file = 'LICENSE'}
 requires-python = '>=3.10'
@@ -47,4 +47,3 @@ img = [
 homepage = 'https://github.com/zgbkdlm/gfk'
 documentation = 'https://github.com/zgbkdlm/gfk'
 repository = 'https://github.com/zgbkdlm/gfk'
-
