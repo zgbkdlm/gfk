@@ -1,3 +1,6 @@
+"""
+Plot the marginal distributions of B0SMC.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import math

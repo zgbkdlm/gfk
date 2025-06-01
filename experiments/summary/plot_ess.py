@@ -1,3 +1,6 @@
+"""
+Plot the effective sample size (ESS) for different methods and offsets.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 

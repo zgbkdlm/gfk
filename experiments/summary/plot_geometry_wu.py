@@ -1,3 +1,6 @@
+"""
+Plot the marginal distributions of TDS.
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import math
