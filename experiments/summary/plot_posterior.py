@@ -39,9 +39,11 @@ for i, offset in enumerate(offsets):
 
         axes[i, j].hist2d(samples[:, slice1], samples[:, slice2], bins=50, weights=ws, density=True, cmap=plt.cm.binary)
         axes[0, j].set_title(label)
+        axes[i, j].grid(linestyle='--', alpha=0.3, which='both')
 
     axes[i, -1].hist2d(post_samples[:, slice1], post_samples[:, slice2], bins=50, density=True, cmap=plt.cm.binary)
     axes[0, -1].set_title('True posterior')
+    axes[i, -1].grid(linestyle='--', alpha=0.3, which='both')
 
     axes[i, 0].set_ylabel(rf'$\omega = {int(offset)}$')
 
