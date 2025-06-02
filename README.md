@@ -2,8 +2,10 @@
 This implementation is associated with the paper xxx. 
 In the paper we develop a new approach for conditional sampling of generative diffusion models with sequential Monte Carlo methods.
 
+<img src="./experiments/post.svg" style="width: 80%; height: auto; display: block; margin-left: auto; margin-right: auto">
+
 # Installation
-You install the package via a standard procedure:
+Install the package via a standard procedure:
 
 ```bash
 git clone git@github.com:zgbkdlm/gfk.git
@@ -27,6 +29,7 @@ python runs_gms/bash_wu.sh --dx=256 --nparticles=16384
 Then, run the scripts in `./summary` to produce the tables and figures, e.g.,
 
 ```bash
+cd experiements
 python ./summary/tabulate_gms.py
 ```
 
