@@ -1,5 +1,5 @@
 # Generative diffusion posterior sampling for informative likelihoods
-This implementation is associated with the paper xxx. 
+This implementation is associated with the paper "Generative diffusion posterior sampling for informative likelihoods" http://arxiv.org/abs/2506.01083. 
 In the paper we develop a new approach for conditional sampling of generative diffusion models with sequential Monte Carlo methods.
 
 <img src="./experiments/post.svg" style="width: 80%; height: auto; display: block; margin-left: auto; margin-right: auto">
