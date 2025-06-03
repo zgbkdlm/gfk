@@ -36,6 +36,12 @@ python ./summary/tabulate_gms.py
 will produce the table. 
 
 # Citation
+@article{Zhao2025b0smc, 
+    author = {Zhao, Zheng}, 
+    title = {Generative diffusion posterior sampling for informative likelihoods},
+    journal = {arXiv preprint arXiv:2506.01083},
+    year = {2025},
+}
 
 # Contact
 Zheng Zhao, Linköping University, https://zz.zabemon.com.
