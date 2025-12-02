@@ -40,7 +40,8 @@ will produce the table.
 @article{Zhao2025b0smc, 
     author = {Zhao, Zheng}, 
     title = {Generative diffusion posterior sampling for informative likelihoods},
-    journal = {arXiv preprint arXiv:2506.01083},
+    journal = {Communications in Information and Systems},
+    note = {Special issue for celebrating Thomas Kailath's 90th birthday}, 
     year = {2025},
 }
 ```
